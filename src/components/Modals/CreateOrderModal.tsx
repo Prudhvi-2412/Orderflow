@@ -1,5 +1,5 @@
 import React, { useState } from 'react';
-import { X, PlusCircle } from 'lucide-react';
+import { X, PlusCircle, ShieldCheck, ArrowRight } from 'lucide-react';
 import { globalInventoryService } from '../../services/InventoryService.js';
 import { globalOrderService } from '../../services/OrderService.js';
 import { createBackendOrder } from '../../api/orderflowApi.js';
@@ -65,35 +65,53 @@ export function CreateOrderModal({ isOpen, onClose, onSuccess }: CreateOrderModa
   };
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-950/80 backdrop-blur-md">
-      <div className="glass-panel w-full max-w-lg rounded-2xl p-6 relative border border-slate-700 shadow-2xl animate-in fade-in zoom-in duration-200">
-        <div className="flex items-center justify-between pb-4 border-b border-slate-800">
-          <div className="flex items-center space-x-2 text-cyan-400 font-bold text-base">
-            <PlusCircle className="h-5 w-5" />
+    <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-900/50 backdrop-blur-xs animate-in fade-in duration-200">
+      <div className="bg-white w-full max-w-lg rounded-2xl p-6 relative border border-slate-200 shadow-2xl space-y-5">
+        
+        {/* Modal Header */}
+        <div className="flex items-center justify-between pb-4 border-b border-slate-200">
+          <div className="flex items-center space-x-2.5 text-slate-900 font-bold text-lg">
+            <div className="p-2 rounded-xl bg-blue-50 text-blue-600 border border-blue-200">
+              <PlusCircle className="h-5 w-5" />
+            </div>
             <span>Create Custom Order</span>
           </div>
-          <button onClick={onClose} className="p-1 rounded-lg text-slate-400 hover:text-slate-100 hover:bg-slate-800">
+          <button
+            onClick={onClose}
+            className="p-1.5 rounded-lg text-slate-400 hover:text-slate-900 hover:bg-slate-100 transition"
+          >
             <X className="h-5 w-5" />
           </button>
         </div>
 
-        <form onSubmit={handleSubmit} className="mt-4 space-y-4">
+        {/* Order Flow Preview */}
+        <div className="bg-slate-50 p-3 rounded-xl border border-slate-200 flex items-center justify-between text-[11px] font-mono text-slate-600">
+          <span>Order</span>
+          <ArrowRight className="h-3 w-3 text-slate-400" />
+          <span>Inventory</span>
+          <ArrowRight className="h-3 w-3 text-slate-400" />
+          <span>Payment</span>
+          <ArrowRight className="h-3 w-3 text-slate-400" />
+          <span>Fulfillment</span>
+        </div>
+
+        <form onSubmit={handleSubmit} className="space-y-4">
           {errorMsg && (
-            <div className="p-3 rounded-xl bg-rose-500/10 border border-rose-500/30 text-rose-300 text-xs">
+            <div className="p-3 rounded-xl bg-rose-50 border border-rose-200 text-rose-700 text-xs font-mono">
               {errorMsg}
             </div>
           )}
 
           <div>
-            <label className="block text-xs font-medium text-slate-400 mb-1">Select Product</label>
+            <label className="block text-xs font-semibold text-slate-700 mb-1">Select Product</label>
             <select
               value={sku}
               onChange={(e) => setSku(e.target.value)}
-              className="w-full glass-input rounded-xl px-3 py-2 text-sm font-medium"
+              className="w-full input-enterprise px-3 py-2 text-xs font-medium"
             >
               {items.map((item) => (
-                <option key={item.id} value={item.id} className="bg-slate-900 text-slate-100">
-                  {item.name} (Available: {item.stock})
+                <option key={item.id} value={item.id}>
+                  {item.name} (Stock: {item.stock})
                 </option>
               ))}
             </select>
@@ -101,72 +119,73 @@ export function CreateOrderModal({ isOpen, onClose, onSuccess }: CreateOrderModa
 
           <div className="grid grid-cols-2 gap-3">
             <div>
-              <label className="block text-xs font-medium text-slate-400 mb-1">Quantity</label>
+              <label className="block text-xs font-semibold text-slate-700 mb-1">Quantity</label>
               <input
                 type="number"
                 min="1"
                 max="5"
                 value={quantity}
                 onChange={(e) => setQuantity(e.target.value)}
-                className="w-full glass-input rounded-xl px-3 py-2 text-sm font-mono"
+                className="w-full input-enterprise px-3 py-2 text-xs font-mono"
               />
             </div>
 
             <div>
-              <label className="block text-xs font-medium text-slate-400 mb-1">Customer Email</label>
+              <label className="block text-xs font-semibold text-slate-700 mb-1">Customer Email</label>
               <input
                 type="email"
                 value={customerEmail}
                 onChange={(e) => setCustomerEmail(e.target.value)}
-                className="w-full glass-input rounded-xl px-3 py-2 text-sm"
+                className="w-full input-enterprise px-3 py-2 text-xs"
               />
             </div>
           </div>
 
           <div>
-            <label className="block text-xs font-medium text-slate-400 mb-1">Idempotency Key</label>
+            <label className="block text-xs font-semibold text-slate-700 mb-1">Idempotency Key</label>
             <input
               type="text"
               value={idempotencyKey}
               onChange={(e) => setIdempotencyKey(e.target.value)}
-              className="w-full glass-input rounded-xl px-3 py-2 text-xs font-mono text-cyan-300"
+              className="w-full input-enterprise px-3 py-2 text-xs font-mono text-blue-700"
             />
           </div>
 
           <div>
-            <label className="block text-xs font-medium text-slate-400 mb-1">Concurrency Locking Strategy</label>
+            <label className="block text-xs font-semibold text-slate-700 mb-1">Locking Strategy</label>
             <select
               value={lockStrategy}
               onChange={(e) => setLockStrategy(e.target.value as 'PESSIMISTIC' | 'OPTIMISTIC' | 'NONE')}
-              className="w-full glass-input rounded-xl px-3 py-2 text-sm font-medium"
+              className="w-full input-enterprise px-3 py-2 text-xs font-medium"
             >
-              <option value="PESSIMISTIC" className="bg-slate-900 text-emerald-400">
-                PESSIMISTIC (PostgreSQL SELECT FOR UPDATE)
-              </option>
-              <option value="OPTIMISTIC" className="bg-slate-900 text-amber-400">
-                OPTIMISTIC (Version CAS Compare-and-Swap)
-              </option>
-              <option value="NONE" className="bg-slate-900 text-rose-400">
-                NONE (Race Condition Simulation)
-              </option>
+              <option value="PESSIMISTIC">PESSIMISTIC (Redis Redlock Mutex)</option>
+              <option value="OPTIMISTIC">OPTIMISTIC (Version CAS Compare-and-Swap)</option>
+              <option value="NONE">NONE (Race Condition Simulation)</option>
             </select>
           </div>
 
-          <div className="pt-4 border-t border-slate-800 flex justify-end space-x-2">
-            <button
-              type="button"
-              onClick={onClose}
-              className="px-4 py-2 rounded-xl text-xs font-medium text-slate-400 hover:text-slate-200"
-            >
-              Cancel
-            </button>
-            <button
-              type="submit"
-              disabled={isSubmitting}
-              className="px-5 py-2 rounded-xl bg-gradient-to-r from-cyan-500 to-indigo-600 text-white text-xs font-bold shadow-lg shadow-cyan-500/25 hover:from-cyan-400 hover:to-indigo-500 transition"
-            >
-              {isSubmitting ? 'Processing Saga...' : 'Submit Order'}
-            </button>
+          <div className="pt-4 border-t border-slate-200 flex items-center justify-between">
+            <div className="flex items-center space-x-1 text-[11px] font-mono text-emerald-700">
+              <ShieldCheck className="h-4 w-4" />
+              <span>Compensating Rollback Protected</span>
+            </div>
+
+            <div className="flex space-x-2">
+              <button
+                type="button"
+                onClick={onClose}
+                className="px-4 py-2 rounded-lg text-xs font-semibold text-slate-600 hover:bg-slate-100"
+              >
+                Cancel
+              </button>
+              <button
+                type="submit"
+                disabled={isSubmitting}
+                className="px-4 py-2 rounded-lg bg-blue-600 text-white text-xs font-bold shadow-sm hover:bg-blue-700 transition"
+              >
+                {isSubmitting ? 'Processing Saga...' : 'Submit Order'}
+              </button>
+            </div>
           </div>
         </form>
       </div>

@@ -35,12 +35,12 @@ export function SagaVisualizer({ onCreateOrder }: SagaVisualizerProps) {
       <HeaderBanner
         icon={Layers}
         title="Distributed Saga Pattern Orchestrator"
-        description="Manages distributed transactions across isolated microservices with strict Event Outbox guarantees and automated Compensating Rollback Transactions upon downstream failure."
-        color="cyan"
+        description="Manages multi-step distributed transactions across isolated microservices with strict Transactional Outbox guarantees and automated Compensating Rollback Transactions upon downstream failure."
+        color="sky"
         actionButton={
           <button
             onClick={onCreateOrder}
-            className="px-4 py-2 rounded-xl bg-gradient-to-r from-cyan-500 to-indigo-600 text-white font-medium text-sm shadow-lg shadow-cyan-500/25 hover:from-cyan-400 hover:to-indigo-500 transition-all flex items-center gap-2"
+            className="px-4 py-2.5 rounded-lg bg-blue-600 text-white font-semibold text-xs shadow-sm hover:bg-blue-700 transition flex items-center gap-2"
           >
             <Plus className="h-4 w-4" />
             <span>Create Custom Order</span>

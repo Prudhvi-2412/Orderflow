@@ -1,18 +1,30 @@
 import React, { useState, useEffect } from 'react';
-import { Navbar } from './components/Navbar.js';
+import { AuthProvider } from './context/AuthContext.js';
+import { Header } from './components/Navigation/Header.js';
+import { Sidebar } from './components/Navigation/Sidebar.js';
+import { OverviewDashboard } from './components/Dashboard/OverviewDashboard.js';
 import { SagaVisualizer } from './components/SagaVisualizer.js';
-import { ConcurrencyTester } from './components/ConcurrencyTester.js';
+import { OrderManagementPage } from './components/Orders/OrderManagementPage.js';
+import { ServicesPage } from './components/Services/ServicesPage.js';
+import { KafkaEventStreamPage } from './components/Kafka/KafkaEventStreamPage.js';
+import { WaterfallTraceViewer } from './components/Observability/WaterfallTraceViewer.js';
+import { InventoryLabPage } from './components/Inventory/InventoryLabPage.js';
+import { LoadTestingPage } from './components/LoadTesting/LoadTestingPage.js';
 import { IdempotencyTester } from './components/IdempotencyTester.js';
 import { ResiliencePanel } from './components/ResiliencePanel.js';
 import { SystemTelemetry } from './components/SystemTelemetry.js';
 import { ArchitectureDoc } from './components/ArchitectureDoc.js';
 import { CreateOrderModal } from './components/Modals/CreateOrderModal.js';
+import { AuthModal } from './components/Modals/AuthModal.js';
+
 import { globalNotificationService, NotificationItem } from './services/NotificationService.js';
 import { globalChaosEngine } from './simulator/ChaosEngine.js';
 
-export function App() {
-  const [activeTab, setActiveTab] = useState('saga');
+export function AppContent() {
+  const [activeTab, setActiveTab] = useState('overview');
+  const [isSidebarCollapsed, setIsSidebarCollapsed] = useState(false);
   const [isModalOpen, setIsModalOpen] = useState(false);
+  const [isAuthModalOpen, setIsAuthModalOpen] = useState(false);
   const [notifications, setNotifications] = useState<NotificationItem[]>([]);
 
   useEffect(() => {
@@ -24,7 +36,7 @@ export function App() {
   }, []);
 
   const handleQuickFlashSale = async () => {
-    setActiveTab('concurrency');
+    setActiveTab('inventory');
     await globalChaosEngine.runFlashSaleSimulation({
       sku: 'ITEM-IPHONE-15',
       stockQty: 5,
@@ -34,49 +46,79 @@ export function App() {
   };
 
   return (
-    <div className="min-h-screen bg-slate-950 text-slate-100 flex flex-col font-sans selection:bg-cyan-500 selection:text-slate-950">
-      <Navbar
-        activeTab={activeTab}
-        setActiveTab={setActiveTab}
-        onQuickOrder={() => setIsModalOpen(true)}
-        onQuickFlashSale={handleQuickFlashSale}
+    <div className="min-h-screen bg-[#F4F8FC] text-slate-900 flex flex-col font-sans selection:bg-blue-600 selection:text-white">
+      {/* Enterprise Top Header */}
+      <Header
+        onNewOrder={() => setIsModalOpen(true)}
+        onTriggerFlashSale={handleQuickFlashSale}
+        onOpenAuth={() => setIsAuthModalOpen(true)}
       />
 
+      {/* Real-time Ticker Banner */}
       {notifications.length > 0 && (
-        <div className="bg-slate-900/90 border-b border-slate-800/80 px-4 py-1.5 overflow-hidden">
-          <div className="max-w-7xl mx-auto flex items-center justify-between text-xs">
-            <div className="flex items-center space-x-2">
-              <span className="h-2 w-2 rounded-full bg-cyan-400 animate-ping"></span>
-              <span className="font-mono text-cyan-400 font-bold uppercase text-[10px]">Live System Stream:</span>
-              <span className="text-slate-300 font-mono truncate max-w-xl">{notifications[0]?.message}</span>
-            </div>
-            <span className="text-[10px] text-slate-500 font-mono hidden sm:inline">{notifications[0]?.isoTime}</span>
+        <div className="bg-blue-50/80 border-b border-blue-100 px-6 py-1.5 backdrop-blur-xs flex items-center justify-between text-xs">
+          <div className="flex items-center space-x-2.5">
+            <span className="h-2 w-2 rounded-full bg-blue-600 animate-ping"></span>
+            <span className="font-mono text-blue-800 font-extrabold uppercase tracking-wider text-[10px]">
+              Live Stream:
+            </span>
+            <span className="text-slate-700 font-mono truncate max-w-2xl text-[11px]">
+              {notifications[0]?.message}
+            </span>
           </div>
+          <span className="text-[10px] text-slate-500 font-mono hidden sm:inline">
+            {notifications[0]?.isoTime}
+          </span>
         </div>
       )}
 
-      <main className="flex-1 max-w-7xl w-full mx-auto px-4 sm:px-6 lg:px-8 py-8 space-y-6">
-        {activeTab === 'saga' && <SagaVisualizer onCreateOrder={() => setIsModalOpen(true)} />}
-        {activeTab === 'concurrency' && <ConcurrencyTester />}
-        {activeTab === 'idempotency' && <IdempotencyTester />}
-        {activeTab === 'resilience' && <ResiliencePanel />}
-        {activeTab === 'telemetry' && <SystemTelemetry />}
-        {activeTab === 'architecture' && <ArchitectureDoc />}
-      </main>
+      {/* Main Workspace Layout (Sidebar + Content) */}
+      <div className="flex-1 flex overflow-hidden">
+        <Sidebar
+          activeTab={activeTab}
+          setActiveTab={setActiveTab}
+          isCollapsed={isSidebarCollapsed}
+          setIsCollapsed={setIsSidebarCollapsed}
+        />
 
-      <footer className="border-t border-slate-900 bg-slate-950 py-6 text-center text-xs text-slate-500 font-mono">
-        <div className="max-w-7xl mx-auto px-4 flex flex-col sm:flex-row items-center justify-between gap-2">
-          <span>OrderFlow Engine © 2026 — Distributed Systems Platform</span>
-          <span className="text-cyan-400/80">Event-Driven • Saga Transactions • Redlock Mutex • Circuit Breaker</span>
-        </div>
-      </footer>
+        <main className="flex-1 overflow-y-auto p-6 md:p-8 space-y-6">
+          <div className="max-w-7xl mx-auto space-y-6">
+            {activeTab === 'overview' && <OverviewDashboard />}
+            {activeTab === 'saga' && <SagaVisualizer onCreateOrder={() => setIsModalOpen(true)} />}
+            {activeTab === 'orders' && <OrderManagementPage />}
+            {activeTab === 'services' && <ServicesPage />}
+            {activeTab === 'kafka' && <KafkaEventStreamPage />}
+            {(activeTab === 'observability' || activeTab === 'trace') && <WaterfallTraceViewer />}
+            {(activeTab === 'inventory' || activeTab === 'concurrency') && <InventoryLabPage />}
+            {activeTab === 'loadtesting' && <LoadTestingPage />}
+            {activeTab === 'idempotency' && <IdempotencyTester />}
+            {activeTab === 'resilience' && <ResiliencePanel />}
+            {activeTab === 'telemetry' && <SystemTelemetry />}
+            {activeTab === 'architecture' && <ArchitectureDoc />}
+          </div>
+        </main>
+      </div>
 
+      {/* Modals */}
       <CreateOrderModal
         isOpen={isModalOpen}
         onClose={() => setIsModalOpen(false)}
         onSuccess={() => setActiveTab('saga')}
       />
+
+      <AuthModal
+        isOpen={isAuthModalOpen}
+        onClose={() => setIsAuthModalOpen(false)}
+      />
     </div>
+  );
+}
+
+export function App() {
+  return (
+    <AuthProvider>
+      <AppContent />
+    </AuthProvider>
   );
 }
 

@@ -16,19 +16,19 @@ export function OutboxEventStream({
   onSelectTopicFilter
 }: OutboxEventStreamProps) {
   return (
-    <div className="glass-panel rounded-2xl p-5">
+    <div className="bg-white rounded-2xl border border-slate-200 p-5 shadow-xs">
       <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4 mb-4">
-        <h3 className="text-sm font-semibold text-slate-200 uppercase tracking-wider flex items-center gap-2">
-          <Zap className="h-4 w-4 text-cyan-400" />
+        <h3 className="text-sm font-bold text-slate-900 uppercase tracking-wider flex items-center gap-2">
+          <Zap className="h-4 w-4 text-blue-600" />
           Live Outbox Event Bus Stream ({filteredLogs.length})
         </h3>
 
         <div className="flex items-center gap-2">
-          <span className="text-xs text-slate-400 font-mono">Filter Topic:</span>
+          <span className="text-xs text-slate-500 font-mono">Filter Topic:</span>
           <select
             value={selectedTopicFilter}
             onChange={(e) => onSelectTopicFilter(e.target.value)}
-            className="glass-input rounded-xl px-3 py-1.5 text-xs font-mono bg-slate-900 text-cyan-300"
+            className="input-enterprise px-3 py-1.5 text-xs font-mono bg-white text-blue-700 font-bold"
           >
             {topics.map((t) => (
               <option key={t} value={t}>
@@ -43,30 +43,30 @@ export function OutboxEventStream({
         {filteredLogs.map((log) => (
           <div
             key={log.id}
-            className="p-3 rounded-xl bg-slate-900/60 border border-slate-800 flex flex-col sm:flex-row items-start sm:items-center justify-between gap-2"
+            className="p-3 rounded-xl bg-slate-50 border border-slate-200 flex flex-col sm:flex-row items-start sm:items-center justify-between gap-2"
           >
             <div className="flex items-center space-x-3">
               <span
                 className={`px-2.5 py-1 rounded text-[10px] font-bold ${
                   log.topic === 'OrderCreated'
-                    ? 'bg-cyan-500/10 text-cyan-400 border border-cyan-500/20'
+                    ? 'bg-blue-100 text-blue-800'
                     : log.topic === 'InventoryReserved'
-                    ? 'bg-purple-500/10 text-purple-400 border border-purple-500/20'
+                    ? 'bg-indigo-100 text-indigo-800'
                     : log.topic === 'PaymentProcessed'
-                    ? 'bg-emerald-500/10 text-emerald-400 border border-emerald-500/20'
+                    ? 'bg-emerald-100 text-emerald-800'
                     : log.topic === 'OrderFailed'
-                    ? 'bg-rose-500/10 text-rose-400 border border-rose-500/20'
-                    : 'bg-slate-800 text-slate-300'
+                    ? 'bg-rose-100 text-rose-800'
+                    : 'bg-slate-200 text-slate-700'
                 }`}
               >
                 {log.topic}
               </span>
-              <span className="text-slate-300">ID: {log.id}</span>
+              <span className="text-slate-800 font-semibold">ID: {log.id}</span>
             </div>
 
             <div className="flex items-center space-x-4 text-[11px] text-slate-500">
               <span>
-                Saga: <strong className="text-slate-400">{log.sagaId || 'N/A'}</strong>
+                Saga: <strong className="text-slate-900">{log.sagaId || 'N/A'}</strong>
               </span>
               <span>{new Date(log.timestamp).toLocaleTimeString()}</span>
             </div>

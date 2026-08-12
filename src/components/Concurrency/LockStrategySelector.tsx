@@ -10,8 +10,8 @@ export function LockStrategySelector({ selectedStrategy, onChangeStrategy }: Loc
   const strategies = [
     {
       id: 'NONE' as const,
-      title: 'NONE (No Concurrency Control)',
-      description: 'Direct read-modify-write without sync. Demonstrates Race Conditions & Overselling!',
+      title: 'NONE (Unsafe Race Condition)',
+      description: 'Direct read-modify-write without synchronization. Demonstrates inventory overselling!',
       color: 'rose' as const,
       icon: AlertOctagon
     },
@@ -33,7 +33,7 @@ export function LockStrategySelector({ selectedStrategy, onChangeStrategy }: Loc
 
   return (
     <div>
-      <label className="block text-xs font-medium text-slate-400 mb-2">Concurrency Control Strategy</label>
+      <label className="block text-xs font-semibold text-slate-700 mb-2">Concurrency Lock Strategy</label>
       <div className="space-y-2">
         {strategies.map((strat) => {
           const Icon = strat.icon;
@@ -41,20 +41,20 @@ export function LockStrategySelector({ selectedStrategy, onChangeStrategy }: Loc
 
           const themeStyles = {
             rose: isSelected
-              ? 'bg-rose-950/30 border-rose-500/50 text-slate-100'
-              : 'bg-slate-900/40 border-slate-800 text-slate-400 hover:bg-slate-800/40',
+              ? 'bg-rose-50 border-rose-300 text-rose-900 shadow-sm'
+              : 'bg-slate-50 border-slate-200 text-slate-600 hover:bg-slate-100/60',
             amber: isSelected
-              ? 'bg-amber-950/30 border-amber-500/50 text-slate-100'
-              : 'bg-slate-900/40 border-slate-800 text-slate-400 hover:bg-slate-800/40',
+              ? 'bg-amber-50 border-amber-300 text-amber-900 shadow-sm'
+              : 'bg-slate-50 border-slate-200 text-slate-600 hover:bg-slate-100/60',
             emerald: isSelected
-              ? 'bg-emerald-950/30 border-emerald-500/50 text-slate-100'
-              : 'bg-slate-900/40 border-slate-800 text-slate-400 hover:bg-slate-800/40'
+              ? 'bg-emerald-50 border-emerald-300 text-emerald-900 shadow-sm'
+              : 'bg-slate-50 border-slate-200 text-slate-600 hover:bg-slate-100/60'
           };
 
           const textColors = {
-            rose: 'text-rose-400',
-            amber: 'text-amber-400',
-            emerald: 'text-emerald-400'
+            rose: 'text-rose-700',
+            amber: 'text-amber-800',
+            emerald: 'text-emerald-800'
           };
 
           return (
@@ -68,14 +68,14 @@ export function LockStrategySelector({ selectedStrategy, onChangeStrategy }: Loc
                 value={strat.id}
                 checked={isSelected}
                 onChange={() => onChangeStrategy(strat.id)}
-                className="mt-1 accent-cyan-500"
+                className="mt-1 accent-blue-600"
               />
               <div className="ml-3">
                 <div className={`text-xs font-bold ${textColors[strat.color]} flex items-center gap-1.5`}>
                   <Icon className="h-4 w-4" />
                   {strat.title}
                 </div>
-                <p className="text-[11px] text-slate-400 mt-0.5">{strat.description}</p>
+                <p className="text-[11px] text-slate-500 mt-0.5">{strat.description}</p>
               </div>
             </label>
           );

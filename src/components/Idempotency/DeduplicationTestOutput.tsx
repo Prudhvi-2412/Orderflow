@@ -14,23 +14,23 @@ export function DeduplicationTestOutput({ lastTestResult }: DeduplicationTestOut
   if (!lastTestResult) return null;
 
   return (
-    <div className="glass-panel rounded-2xl p-5 border border-purple-500/30">
+    <div className="bg-white rounded-2xl p-5 border border-indigo-200 shadow-xs">
       <div className="flex items-center justify-between mb-4">
-        <h4 className="text-xs font-bold text-purple-300 uppercase tracking-wider flex items-center gap-2">
-          <CheckCircle className="h-4 w-4 text-emerald-400" />
-          Deduplication Benchmark Complete
+        <h4 className="text-xs font-bold text-indigo-900 uppercase tracking-wider flex items-center gap-2">
+          <CheckCircle className="h-4 w-4 text-emerald-600" />
+          Deduplication Benchmark Output
         </h4>
-        <span className="text-xs font-mono text-slate-400">Key: {lastTestResult.key}</span>
+        <span className="text-xs font-mono text-slate-500 font-bold">Key: {lastTestResult.key}</span>
       </div>
 
-      <div className="grid grid-cols-2 gap-4 bg-slate-900/60 p-3 rounded-xl border border-slate-800 mb-4 text-xs">
+      <div className="grid grid-cols-2 gap-4 bg-slate-50 p-3 rounded-xl border border-slate-200 mb-4 text-xs">
         <div>
-          <span className="text-slate-400">Actual Backend Executions:</span>
-          <div className="text-base font-bold font-mono text-emerald-400">{lastTestResult.actualExecutions} (Only 1!)</div>
+          <span className="text-slate-500 font-mono">Actual Backend Executions:</span>
+          <div className="text-base font-extrabold font-mono text-emerald-700">{lastTestResult.actualExecutions} (Exactly 1!)</div>
         </div>
         <div>
-          <span className="text-slate-400">Duplicate Cache Hits Served:</span>
-          <div className="text-base font-bold font-mono text-purple-400">{lastTestResult.cacheHits} deduplicated</div>
+          <span className="text-slate-500 font-mono">Duplicate Cache Hits Served:</span>
+          <div className="text-base font-extrabold font-mono text-indigo-700">{lastTestResult.cacheHits} deduplicated</div>
         </div>
       </div>
 
@@ -40,12 +40,12 @@ export function DeduplicationTestOutput({ lastTestResult }: DeduplicationTestOut
             key={i}
             className={`p-2 rounded-lg text-xs font-mono flex items-center justify-between ${
               resp.cacheHit
-                ? 'bg-purple-950/30 border border-purple-500/20 text-purple-300'
-                : 'bg-emerald-950/30 border border-emerald-500/20 text-emerald-300'
+                ? 'bg-indigo-50 border border-indigo-200 text-indigo-900 font-semibold'
+                : 'bg-emerald-50 border border-emerald-200 text-emerald-900 font-bold'
             }`}
           >
             <span>Request #{resp.index + 1}</span>
-            <span>{resp.cacheHit ? 'HTTP 200 OK (Served from Idempotent Cache)' : 'HTTP 201 Created (Original Execution)'}</span>
+            <span>{resp.cacheHit ? '↻ DEDUPLICATED (HTTP 200 OK Cached)' : '✓ EXECUTED (HTTP 201 Created)'}</span>
           </div>
         ))}
       </div>
