@@ -1,0 +1,155 @@
+version: '3.8'
+
+services:
+  # 1. PostgreSQL Database (ACID Storage & Row-Level Locking)
+  postgres:
+    image: postgres:15-alpine
+    container_name: orderflow-postgres
+    restart: always
+    environment:
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: postgres
+      POSTGRES_DB: orderflow
+    ports:
+      - "5432:5432"
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+      - ./backend/src/db/schema.sql:/docker-entrypoint-initdb.d/schema.sql
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+
+  # 2. Redis Memory Cache (Idempotency Fast Path & Rate Limiting)
+  redis:
+    image: redis:7-alpine
+    container_name: orderflow-redis
+    restart: always
+    ports:
+      - "6379:6379"
+
+  # 3. Zookeeper (Kafka Coordination)
+  zookeeper:
+    image: confluentinc/cp-zookeeper:7.5.0
+    container_name: orderflow-zookeeper
+    environment:
+      ZOOKEEPER_CLIENT_PORT: 2181
+      ZOOKEEPER_TICK_TIME: 2000
+    ports:
+      - "2181:2181"
+
+  # 4. Apache Kafka Broker (Event Streaming Log)
+  kafka:
+    image: confluentinc/cp-kafka:7.5.0
+    container_name: orderflow-kafka
+    depends_on:
+      - zookeeper
+    ports:
+      - "9092:9092"
+    environment:
+      KAFKA_BROKER_ID: 1
+      KAFKA_ZOOKEEPER_CONNECT: zookeeper:2181
+      KAFKA_ADVERTISED_LISTENERS: PLAINTEXT://kafka:9092,PLAINTEXT_HOST://localhost:29092
+      KAFKA_LISTENER_SECURITY_PROTOCOL_MAP: PLAINTEXT:PLAINTEXT,PLAINTEXT_HOST:PLAINTEXT
+      KAFKA_INTER_BROKER_LISTENER_NAME: PLAINTEXT
+      KAFKA_OFFSETS_TOPIC_REPLICATION_FACTOR: 1
+
+  # 5. RabbitMQ Task Broker (Notification Queues & Dead Letter Exchange DLX)
+  rabbitmq:
+    image: rabbitmq:3-management-alpine
+    container_name: orderflow-rabbitmq
+    restart: always
+    ports:
+      - "5672:5672"
+      - "15672:15672"
+
+  # 6. Jaeger OpenTelemetry Tracing UI & OTLP Collector
+  jaeger:
+    image: jaegertracing/all-in-one:latest
+    container_name: orderflow-jaeger
+    restart: always
+    ports:
+      - "16686:16686" # Jaeger UI
+      - "4318:4318"   # OTLP HTTP Receiver
+
+  # 7. Prometheus Metrics Scraper
+  prometheus:
+    image: prom/prometheus:latest
+    container_name: orderflow-prometheus
+    restart: always
+    volumes:
+      - ./prometheus.yml:/etc/prometheus/prometheus.yml
+    ports:
+      - "9090:9090"
+
+  # 8. Grafana Telemetry Dashboards
+  grafana:
+    image: grafana/grafana:latest
+    container_name: orderflow-grafana
+    restart: always
+    ports:
+      - "3000:3000"
+
+  # 9. Express API Gateway & Saga Orchestrator
+  api:
+    build: .
+    container_name: orderflow-api
+    restart: always
+    command: npm run server
+    ports:
+      - "4000:4000"
+    environment:
+      PORT: 4000
+      DATABASE_URL: postgresql://postgres:postgres@postgres:5432/orderflow
+      REDIS_URL: redis://redis:6379
+      KAFKA_BROKERS: kafka:9092
+      RABBITMQ_URL: amqp://rabbitmq:5672
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_started
+      kafka:
+        condition: service_started
+
+  # 10. Background Transactional Outbox Worker
+  outbox-worker:
+    build: .
+    container_name: orderflow-outbox-worker
+    restart: always
+    command: npm run worker:outbox
+    environment:
+      DATABASE_URL: postgresql://postgres:postgres@postgres:5432/orderflow
+      KAFKA_BROKERS: kafka:9092
+    depends_on:
+      postgres:
+        condition: service_healthy
+      kafka:
+        condition: service_started
+
+  # 11. Background RabbitMQ Notification Worker
+  notification-worker:
+    build: .
+    container_name: orderflow-notification-worker
+    restart: always
+    command: npm run worker:notification
+    environment:
+      RABBITMQ_URL: amqp://rabbitmq:5672
+    depends_on:
+      rabbitmq:
+        condition: service_started
+
+  # 12. React Vite Frontend UI Dashboard
+  ui:
+    build: .
+    container_name: orderflow-ui
+    restart: always
+    command: npm run dev -- --host
+    ports:
+      - "5173:5173"
+    depends_on:
+      - api
+
+volumes:
+  pgdata:
