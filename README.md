@@ -84,6 +84,46 @@ It demonstrates how modern distributed systems handle high-concurrency flash sal
 
 ---
 
+## 🤖 AI Operations — MCP (Model Context Protocol)
+
+OrderFlow features an AI Operations control plane built using the official **Model Context Protocol (MCP) TypeScript SDK**.
+
+### Architecture Overview:
+```
+AI Assistant / LLM Agent
+          |
+          v
+ OrderFlow MCP Server (mcp-server/)
+          |
+          +---> OrderFlow API / Services (orderService, sagaOrchestrator, inventoryService)
+          +---> PostgreSQL / Kafka / RabbitMQ / Redis
+```
+
+### Available MCP Tools:
+
+#### 📖 READ-ONLY TOOLS:
+- `get_order(orderId)`: Detailed status, line items, payment/inventory state, and Saga ID.
+- `get_saga_status(orderId)`: Complete Saga execution step machine history & compensation status.
+- `get_order_events(orderId)`: Outbox events & processed consumer events.
+- `get_inventory(sku)`: Real stock levels & version CAS status.
+- `get_service_health`: Infrastructure connection status (PostgreSQL, Redis, Kafka, RabbitMQ).
+- `get_system_metrics`: Platform RED metrics (RPS, latency P50/P95/P99, active locks).
+- `get_kafka_events`: Topic message log inspection.
+- `get_dlq_messages`: Dead-letter queue tasks.
+
+#### 🛡️ SAFE WRITE TOOLS (RBAC + Human Approval Guard):
+- `retry_order`: Re-triggers order processing via `sagaOrchestrator.executeSaga`.
+- `redrive_dlq_message`: Re-enqueues DLQ message to main queue.
+- `replay_event`: Re-publishes outbox event to Kafka.
+- `reset_circuit_breaker`: Resets circuit breaker state to `CLOSED`.
+
+### Example AI Investigations:
+- *"Why did order ORD-1024 fail?"* -> Executes `get_order` -> `get_saga_status` -> `get_order_events` -> `get_service_health`.
+- *"Are there any unhealthy components?"* -> Executes `get_service_health` -> `get_system_metrics`.
+- *"What is currently in the DLQ?"* -> Executes `get_dlq_messages`.
+
+---
+
 ## ⚡ Quick Start with Docker Compose
 
 Launch the entire 12-container distributed infrastructure with one command:

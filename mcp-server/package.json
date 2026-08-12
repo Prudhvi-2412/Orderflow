@@ -1,0 +1,27 @@
+{
+  "name": "orderflow-mcp-server",
+  "version": "1.0.0",
+  "description": "OrderFlow MCP (Model Context Protocol) AI Operations Server",
+  "type": "module",
+  "main": "dist/server.js",
+  "scripts": {
+    "build": "tsc",
+    "start": "node dist/server.js",
+    "dev": "tsx watch src/server.ts"
+  },
+  "dependencies": {
+    "@modelcontextprotocol/sdk": "^0.6.0",
+    "dotenv": "^16.4.5",
+    "express": "^4.19.2",
+    "ioredis": "^5.3.2",
+    "pg": "^8.11.5",
+    "prom-client": "^15.1.0"
+  },
+  "devDependencies": {
+    "@types/express": "^4.17.21",
+    "@types/node": "^20.11.24",
+    "@types/pg": "^8.11.2",
+    "tsx": "^4.7.1",
+    "typescript": "^5.3.3"
+  }
+}

@@ -79,6 +79,10 @@ export class OrderFlowRabbitMQ {
     if (this.connection) await this.connection.close();
     this.isConnected = false;
   }
+
+  public getIsConnected(): boolean {
+    return this.isConnected;
+  }
 }
 
 export const rabbitMQClient = new OrderFlowRabbitMQ();

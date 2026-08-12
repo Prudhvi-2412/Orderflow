@@ -5,10 +5,15 @@ import { register, ordersTotalCounter } from '../metrics/prometheus.js';
 import { authRouter } from './auth.js';
 import { pool } from '../config/db.js';
 import { isRedisAvailable, redis } from '../redis/client.js';
+import { idempotencyMiddleware } from '../middleware/idempotencyMiddleware.js';
+import { kafkaProducer } from '../kafka/producer.js';
+import { rabbitMQClient } from '../rabbitmq/client.js';
+import { mcpRouter } from './mcpRouter.js';
 
 export const apiRouter = Router();
 
 apiRouter.use('/auth', authRouter);
+apiRouter.use('/mcp', mcpRouter);
 
 /**
  * GET /api/health
@@ -138,36 +143,36 @@ apiRouter.get('/services/health', async (req, res) => {
     {
       id: 'kafka',
       name: 'Kafka Event Mesh',
-      status: 'HEALTHY',
-      latencyMs: 6,
-      requestsCount: 14500,
-      uptime: '99.99%',
-      mode: 'REAL',
+      status: kafkaProducer.isKafkaConnected() ? 'HEALTHY' : 'UNAVAILABLE',
+      latencyMs: kafkaProducer.isKafkaConnected() ? 6 : 0,
+      requestsCount: kafkaProducer.isKafkaConnected() ? 14500 : 0,
+      uptime: kafkaProducer.isKafkaConnected() ? '99.99%' : '0%',
+      mode: kafkaProducer.isKafkaConnected() ? 'REAL' : 'UNAVAILABLE',
       lastChecked: 'Just now',
       details: {
         type: 'Event Streaming Broker',
-        cluster: 'localhost:9092',
+        cluster: process.env.KAFKA_BROKERS || 'localhost:9092',
         topics: ['OrderCreated', 'InventoryReserved', 'PaymentProcessed', 'OrderFailed'],
         partitions: 4,
         consumerGroups: 3,
-        recentErrors: 0
+        recentErrors: kafkaProducer.isKafkaConnected() ? 0 : 1
       }
     },
     {
       id: 'rabbitmq',
       name: 'RabbitMQ Broker',
-      status: 'HEALTHY',
-      latencyMs: 11,
-      requestsCount: 8400,
-      uptime: '99.95%',
-      mode: 'REAL',
-      lastChecked: '2 seconds ago',
+      status: rabbitMQClient.getIsConnected() ? 'HEALTHY' : 'UNAVAILABLE',
+      latencyMs: rabbitMQClient.getIsConnected() ? 11 : 0,
+      requestsCount: rabbitMQClient.getIsConnected() ? 8400 : 0,
+      uptime: rabbitMQClient.getIsConnected() ? '99.95%' : '0%',
+      mode: rabbitMQClient.getIsConnected() ? 'REAL' : 'UNAVAILABLE',
+      lastChecked: 'Just now',
       details: {
         type: 'AMQP Message Broker',
-        host: 'amqp://localhost:5672',
-        exchanges: ['order_exchange'],
-        queues: ['order_notifications', 'dlq_notifications'],
-        recentErrors: 0
+        host: process.env.RABBITMQ_URL || 'amqp://localhost:5672',
+        exchanges: ['orders_exchange', 'notification_dlx'],
+        queues: ['notification_queue', 'notification_dlq'],
+        recentErrors: rabbitMQClient.getIsConnected() ? 0 : 1
       }
     },
     {
@@ -230,7 +235,7 @@ apiRouter.get('/metrics', async (req, res) => {
 /**
  * POST /api/orders - Submit Order via Saga Orchestrator
  */
-apiRouter.post('/orders', async (req, res) => {
+apiRouter.post('/orders', idempotencyMiddleware, async (req, res) => {
   try {
     const { sku, quantity, price, customerEmail, idempotencyKey, lockStrategy } = req.body;
 

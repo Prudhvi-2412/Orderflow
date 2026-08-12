@@ -1,43 +1,67 @@
+import pg from 'pg';
 import { pool } from '../config/db.js';
-import { EventMessageHandler } from './consumer.js';
+
+export type TransactionalHandler = (
+  topic: string,
+  payload: any,
+  meta: any,
+  client?: pg.PoolClient
+) => Promise<void>;
 
 export interface IdempotentConsumerOptions {
   consumerGroup: string;
-  handler: EventMessageHandler;
+  handler: TransactionalHandler;
 }
 
 /**
- * Idempotent Consumer Wrapper using PostgreSQL `processed_events` Table
- * Prevents duplicate processing of Kafka events across retries & crashes.
+ * Transactionally Idempotent Consumer Wrapper
+ * Coordinates business state mutation and `processed_events` insertion in the SAME PostgreSQL transaction.
+ * Guarantees At-Least-Once Kafka Delivery + Idempotent Business Execution.
  */
-export function wrapIdempotentConsumer(options: IdempotentConsumerOptions): EventMessageHandler {
+export function wrapIdempotentConsumer(options: IdempotentConsumerOptions) {
   const { consumerGroup, handler } = options;
 
   return async (topic: string, payload: any, meta: any) => {
-    const eventId = meta.eventId || payload.eventId || `${topic}_${meta.offset}_${meta.partition}`;
+    const eventId = meta?.eventId || payload?.eventId || `${topic}_${meta?.offset || 0}_${meta?.partition || 0}`;
 
-    // 1. Attempt Atomic Deduplication Insert into PostgreSQL
+    const client = await pool.connect();
+
     try {
-      const dbRes = await pool.query(
-        `INSERT INTO processed_events (event_id, consumer_group)
-         VALUES ($1, $2)
-         ON CONFLICT (event_id, consumer_group) DO NOTHING
-         RETURNING id`,
+      await client.query('BEGIN');
+
+      // 1. Check whether event was already processed in database
+      const checkRes = await client.query(
+        `SELECT id FROM processed_events 
+         WHERE event_id = $1 AND consumer_group = $2 
+         FOR UPDATE`,
         [eventId, consumerGroup]
       );
 
-      // If 0 rows returned, key already exists -> DUPLICATE EVENT DETECTED
-      if (dbRes.rows.length === 0) {
-        console.warn(`[Idempotent Consumer] Skipped duplicate Kafka event '${eventId}' for consumer group '${consumerGroup}'.`);
-        return; // Skip handler execution safely
+      if (checkRes.rows.length > 0) {
+        console.warn(`[Idempotent Consumer] Skipped duplicate Kafka event '${eventId}' for group '${consumerGroup}'.`);
+        await client.query('COMMIT');
+        return;
       }
 
-      // 2. First-time processing -> Execute underlying business logic
-      await handler(topic, payload, meta);
+      // 2. Execute business state mutation inside transaction
+      await handler(topic, payload, meta, client);
+
+      // 3. Mark processed_events in the SAME transaction
+      await client.query(
+        `INSERT INTO processed_events (event_id, consumer_group)
+         VALUES ($1, $2)
+         ON CONFLICT (event_id, consumer_group) DO NOTHING`,
+        [eventId, consumerGroup]
+      );
+
+      await client.query('COMMIT');
 
     } catch (err: any) {
-      console.error(`❌ Idempotent Consumer Error for event '${eventId}':`, err.message);
-      throw err; // Re-throw to allow Kafka retry mechanism
+      await client.query('ROLLBACK');
+      console.error(`❌ [Idempotent Consumer] Transaction rolled back for event '${eventId}':`, err.message);
+      throw err; // Re-throw to trigger Kafka retry
+    } finally {
+      client.release();
     }
   };
 }

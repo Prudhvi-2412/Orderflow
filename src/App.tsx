@@ -14,6 +14,7 @@ import { IdempotencyTester } from './components/IdempotencyTester.js';
 import { ResiliencePanel } from './components/ResiliencePanel.js';
 import { SystemTelemetry } from './components/SystemTelemetry.js';
 import { ArchitectureDoc } from './components/ArchitectureDoc.js';
+import { AIOperationsPage } from './components/Mcp/AIOperationsPage.js';
 import { CreateOrderModal } from './components/Modals/CreateOrderModal.js';
 import { AuthModal } from './components/Modals/AuthModal.js';
 
@@ -84,6 +85,7 @@ export function AppContent() {
         <main className="flex-1 overflow-y-auto p-6 md:p-8 space-y-6">
           <div className="max-w-7xl mx-auto space-y-6">
             {activeTab === 'overview' && <OverviewDashboard />}
+            {activeTab === 'mcp' && <AIOperationsPage />}
             {activeTab === 'saga' && <SagaVisualizer onCreateOrder={() => setIsModalOpen(true)} />}
             {activeTab === 'orders' && <OrderManagementPage />}
             {activeTab === 'services' && <ServicesPage />}

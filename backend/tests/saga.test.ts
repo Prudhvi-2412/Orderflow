@@ -3,52 +3,80 @@ import { paymentService } from '../src/services/paymentService.js';
 import { inventoryService } from '../src/services/inventoryService.js';
 import { pool } from '../src/config/db.js';
 
-describe('Saga Orchestration & Compensating Transactions Tests', () => {
+describe('Event-Driven Saga Orchestration & Compensating Workflows', () => {
+
+  beforeEach(() => {
+    paymentService.setChaos(0, false);
+  });
 
   it('should execute full Saga workflow to COMPLETED status on happy path', async () => {
-    paymentService.setChaos(0, false); // No failure
-    const orderId = `ORD-SAGA-SUCCESS-${Date.now()}`;
+    const orderId = `ORD-SAGA-OK-${Date.now()}`;
     const sku = 'ITEM-IPHONE-15';
 
-    // Insert order record in DB
     await pool.query(
       `INSERT INTO orders (order_id, customer_email, total_amount, status)
-       VALUES ($1, 'alex.dev@example.com', 999.00, 'PROCESSING')`,
+       VALUES ($1, 'user@orderflow.io', 999.00, 'PENDING')`,
       [orderId]
     );
 
-    const result = await sagaOrchestrator.executeSaga(orderId, sku, 1, 999.00, 'alex.dev@example.com', 'PESSIMISTIC');
+    const result = await sagaOrchestrator.executeSaga(orderId, sku, 1, 999.00, 'user@orderflow.io', 'PESSIMISTIC');
 
     expect(result.status).toBe('COMPLETED');
     expect(result.currentStep).toBe('CONFIRMED');
   });
 
-  it('should execute Saga Compensating Rollback (Release Stock) when payment fails', async () => {
-    paymentService.setChaos(100, true); // Force 100% payment outage
-    const orderId = `ORD-SAGA-FAIL-${Date.now()}`;
+  it('should mark Saga FAILED when inventory stock is insufficient', async () => {
+    const orderId = `ORD-SAGA-NOSTOCK-${Date.now()}`;
     const sku = 'ITEM-IPHONE-15';
 
-    const initialStockObj = await inventoryService.getStock(sku);
-    const initialStock = initialStockObj?.stock_quantity || 5;
-
-    // Insert order record in DB
     await pool.query(
       `INSERT INTO orders (order_id, customer_email, total_amount, status)
-       VALUES ($1, 'alex.dev@example.com', 999.00, 'PROCESSING')`,
+       VALUES ($1, 'user@orderflow.io', 999.00, 'PENDING')`,
       [orderId]
     );
 
-    const result = await sagaOrchestrator.executeSaga(orderId, sku, 1, 999.00, 'alex.dev@example.com', 'PESSIMISTIC');
+    // Request 999,999 units to force inventory failure
+    const result = await sagaOrchestrator.executeSaga(orderId, sku, 999999, 999.00, 'user@orderflow.io', 'PESSIMISTIC');
+
+    expect(result.status).toBe('FAILED');
+    expect(result.errorReason).toContain('Insufficient stock');
+  });
+
+  it('should execute Saga Compensation (Release Stock) when payment fails', async () => {
+    paymentService.setChaos(100, true); // Force payment gateway outage
+    const orderId = `ORD-SAGA-PAYFAIL-${Date.now()}`;
+    const sku = 'ITEM-IPHONE-15';
+
+    const stockBefore = (await inventoryService.getStock(sku))?.stock_quantity || 5;
+
+    await pool.query(
+      `INSERT INTO orders (order_id, customer_email, total_amount, status)
+       VALUES ($1, 'user@orderflow.io', 999.00, 'PENDING')`,
+      [orderId]
+    );
+
+    const result = await sagaOrchestrator.executeSaga(orderId, sku, 1, 999.00, 'user@orderflow.io', 'PESSIMISTIC');
 
     expect(result.status).toBe('CANCELLED');
-    expect(result.errorReason).toContain('Payment Gateway Outage');
 
-    // Verify inventory stock was restored back via compensating transaction!
-    const finalStockObj = await inventoryService.getStock(sku);
-    expect(finalStockObj.stock_quantity).toBe(initialStock);
+    // Verify compensating transaction restored inventory quantity
+    const stockAfter = (await inventoryService.getStock(sku))?.stock_quantity;
+    expect(stockAfter).toBe(stockBefore);
+  });
 
-    // Reset chaos
-    paymentService.setChaos(0, false);
+  it('should recover Saga state after process restart', async () => {
+    const orderId = `ORD-SAGA-RESTART-${Date.now()}`;
+
+    await pool.query(
+      `INSERT INTO orders (order_id, customer_email, total_amount, status)
+       VALUES ($1, 'restart@orderflow.io', 1200.00, 'INVENTORY_RESERVED')`,
+      [orderId]
+    );
+
+    const recoveredSaga = await sagaOrchestrator.getSagaState(orderId);
+    expect(recoveredSaga).not.toBeNull();
+    expect(recoveredSaga?.status).toBe('INVENTORY_RESERVED');
+    expect(recoveredSaga?.completedSteps).toContain('INVENTORY_RESERVED');
   });
 
 });

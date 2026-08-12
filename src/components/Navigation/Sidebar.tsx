@@ -14,6 +14,7 @@ import {
   Network,
   ChevronLeft,
   ChevronRight,
+  Bot,
   LucideIcon
 } from 'lucide-react';
 
@@ -34,6 +35,7 @@ export interface NavItem {
 export function Sidebar({ activeTab, setActiveTab, isCollapsed, setIsCollapsed }: SidebarProps) {
   const navItems: NavItem[] = [
     { id: 'overview', label: 'Overview', icon: LayoutDashboard },
+    { id: 'mcp', label: 'AI Operations', icon: Bot, badge: 'MCP' },
     { id: 'orders', label: 'Orders', icon: ShoppingCart },
     { id: 'saga', label: 'Saga Orchestrator', icon: GitMerge },
     { id: 'services', label: 'Services', icon: Server },

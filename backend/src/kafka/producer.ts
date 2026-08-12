@@ -24,6 +24,10 @@ export class OrderFlowKafkaProducer {
     }
   }
 
+  public isKafkaConnected(): boolean {
+    return this.isConnected;
+  }
+
   async publish(topic: KafkaTopic, key: string, payload: any, meta: { sagaId?: string; eventId?: string } = {}): Promise<boolean> {
     const eventId = meta.eventId || `evt_${Date.now()}_${Math.random().toString(36).substring(2, 8)}`;
     const eventMessage = {

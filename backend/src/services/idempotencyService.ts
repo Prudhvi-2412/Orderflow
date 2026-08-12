@@ -10,24 +10,24 @@ export interface IdempotencyCheckResult {
 }
 
 export class IdempotencyService {
-  private redisTTL = 86400; // 24 hours in seconds
+  private redisTTL = 86400; // 24 hours TTL
 
   /**
    * Compute deterministic SHA-256 hash of payload
    */
-  private hashPayload(payload: any): string {
+  public hashPayload(payload: any): string {
     const jsonStr = JSON.stringify(payload || {});
     return crypto.createHash('sha256').update(jsonStr).digest('hex');
   }
 
   /**
-   * Begin Idempotency Lifecycle Check
+   * Begin Idempotency Lifecycle Check with Atomic Claiming
    */
   async begin(key: string, payload: any): Promise<IdempotencyCheckResult> {
     const payloadHash = this.hashPayload(payload);
     const redisKey = `idemp:${key}`;
 
-    // 1. FAST PATH: Check Redis Cache (Sub-millisecond)
+    // 1. FAST PATH: Check Redis Cache
     try {
       const cached = await redis.get(redisKey);
       if (cached) {
@@ -55,15 +55,40 @@ export class IdempotencyService {
         }
       }
     } catch (redisErr) {
-      // Redis unavailable; fall through to PostgreSQL durable table
+      // Redis fallback -> proceed to durable PostgreSQL table
     }
 
-    // 2. SLOW/DURABLE PATH: Check PostgreSQL `idempotency_keys` table
-    const dbRes = await pool.query(`SELECT * FROM idempotency_keys WHERE key = $1`, [key]);
+    // 2. ATOMIC CLAIM in PostgreSQL: Attempt to INSERT first
+    const insertRes = await pool.query(
+      `INSERT INTO idempotency_keys (key, request_hash, status)
+       VALUES ($1, $2, 'PENDING')
+       ON CONFLICT (key) DO NOTHING
+       RETURNING id, key, request_hash, status`,
+      [key, payloadHash]
+    );
+
+    // If 1 row returned -> Current request successfully claimed ownership!
+    if (insertRes.rows.length === 1) {
+      try {
+        await redis.setex(redisKey, this.redisTTL, JSON.stringify({
+          requestHash: payloadHash,
+          status: 'PENDING'
+        }));
+      } catch (e) {}
+
+      return { action: 'EXECUTE' };
+    }
+
+    // 3. KEY ALREADY EXISTS -> Inspect existing record to handle duplicate/payload mismatch
+    const dbRes = await pool.query(
+      `SELECT key, request_hash, status, response_body FROM idempotency_keys WHERE key = $1`,
+      [key]
+    );
 
     if (dbRes.rows.length > 0) {
       const row = dbRes.rows[0];
 
+      // Payload Mismatch Check
       if (row.request_hash !== payloadHash) {
         return {
           action: 'PAYLOAD_MISMATCH',
@@ -81,7 +106,7 @@ export class IdempotencyService {
       }
 
       if (row.status === 'COMPLETED') {
-        // Backfill Redis Cache
+        // Backfill Redis
         try {
           await redis.setex(redisKey, this.redisTTL, JSON.stringify({
             requestHash: row.request_hash,
@@ -96,22 +121,26 @@ export class IdempotencyService {
           statusCode: 200
         };
       }
+
+      if (row.status === 'FAILED') {
+        // Allow retry on previously failed execution
+        await pool.query(
+          `UPDATE idempotency_keys 
+           SET status = 'PENDING', request_hash = $1, response_body = NULL, updated_at = NOW() 
+           WHERE key = $2`,
+          [payloadHash, key]
+        );
+
+        try {
+          await redis.setex(redisKey, this.redisTTL, JSON.stringify({
+            requestHash: payloadHash,
+            status: 'PENDING'
+          }));
+        } catch (e) {}
+
+        return { action: 'EXECUTE' };
+      }
     }
-
-    // 3. FIRST REQUEST: Stage `PENDING` state in PostgreSQL & Redis
-    await pool.query(
-      `INSERT INTO idempotency_keys (key, request_hash, status)
-       VALUES ($1, $2, 'PENDING')
-       ON CONFLICT (key) DO NOTHING`,
-      [key, payloadHash]
-    );
-
-    try {
-      await redis.setex(redisKey, this.redisTTL, JSON.stringify({
-        requestHash: payloadHash,
-        status: 'PENDING'
-      }));
-    } catch (e) {}
 
     return { action: 'EXECUTE' };
   }
@@ -123,7 +152,6 @@ export class IdempotencyService {
     const payloadHash = this.hashPayload(payload);
     const redisKey = `idemp:${key}`;
 
-    // 1. Update PostgreSQL Durable Record
     await pool.query(
       `UPDATE idempotency_keys 
        SET status = 'COMPLETED', response_body = $1, updated_at = NOW() 
@@ -131,7 +159,6 @@ export class IdempotencyService {
       [JSON.stringify(responseBody), key]
     );
 
-    // 2. Update Redis Cache
     try {
       await redis.setex(redisKey, this.redisTTL, JSON.stringify({
         requestHash: payloadHash,
