@@ -61,33 +61,42 @@ describe('OrderFlow MCP AI Operations Tools & Resources Test Suite', () => {
   });
 
   it('Write Tool Security: retry_order should block unauthorized roles', async () => {
-    const res = await executeMCPTool('retry_order', {
-      orderId: testOrderId,
-      userRole: 'VIEWER',
-      confirmationConfirmed: true
-    });
+    const res = await executeMCPTool(
+      'retry_order',
+      {
+        orderId: testOrderId,
+        confirmationConfirmed: true
+      },
+      { role: 'VIEWER' }
+    );
 
     expect(res.error).toBe('FORBIDDEN');
     expect(res.message).toContain('requires ADMIN or OPERATOR role');
   });
 
   it('Write Tool Security: retry_order should reject unconfirmed human operations', async () => {
-    const res = await executeMCPTool('retry_order', {
-      orderId: testOrderId,
-      userRole: 'ADMIN',
-      confirmationConfirmed: false // Missing confirmation!
-    });
+    const res = await executeMCPTool(
+      'retry_order',
+      {
+        orderId: testOrderId,
+        confirmationConfirmed: false // Missing confirmation!
+      },
+      { role: 'ADMIN' }
+    );
 
     expect(res.error).toBe('CONFIRMATION_REQUIRED');
     expect(res.requiresAction).toBe('CONFIRM_EXECUTION');
   });
 
   it('Write Tool Execution: retry_order should execute when authorized with confirmation', async () => {
-    const res = await executeMCPTool('retry_order', {
-      orderId: testOrderId,
-      userRole: 'ADMIN',
-      confirmationConfirmed: true
-    });
+    const res = await executeMCPTool(
+      'retry_order',
+      {
+        orderId: testOrderId,
+        confirmationConfirmed: true
+      },
+      { role: 'ADMIN' }
+    );
 
     expect(res.success).toBe(true);
     expect(res.message).toContain('retry executed');

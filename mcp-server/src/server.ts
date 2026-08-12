@@ -165,10 +165,10 @@ export class MCPServer {
 export const mcpServerInstance = new MCPServer();
 
 // Direct API / Express Router Helper Exports
-export async function executeMCPTool(toolName: string, args: any) {
+export async function executeMCPTool(toolName: string, args: any, authContext?: any) {
   const isWriteTool = WRITE_TOOLS_DEFINITIONS.some((t) => t.name === toolName);
   if (isWriteTool) {
-    return await handleWriteToolCall(toolName, args);
+    return await handleWriteToolCall(toolName, args, authContext);
   } else {
     return await handleReadToolCall(toolName, args);
   }

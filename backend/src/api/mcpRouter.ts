@@ -1,6 +1,7 @@
 import { Router } from 'express';
 import { executeMCPTool, getMCPToolsList, getMCPResourcesList } from '../../../mcp-server/src/server.js';
 import { handleReadResource } from '../../../mcp-server/src/resources/resources.js';
+import { authService } from '../services/authService.js';
 
 export const mcpRouter = Router();
 
@@ -19,13 +20,24 @@ mcpRouter.get('/tools', (req, res) => {
  */
 mcpRouter.post('/tools/execute', async (req, res) => {
   try {
-    const { toolName, arguments: args } = req.body;
+    const { toolName, arguments: args, userRole } = req.body;
 
     if (!toolName) {
       return res.status(400).json({ error: 'INVALID_ARGUMENTS', message: 'toolName is required' });
     }
 
-    const result = await executeMCPTool(toolName, args || {});
+    // Authenticated role fallback check
+    let role = userRole || 'VIEWER';
+    const authHeader = req.headers.authorization;
+    if (authHeader && authHeader.startsWith('Bearer ')) {
+      const token = authHeader.split(' ')[1];
+      const user = authService.verifyToken(token);
+      if (user) {
+        role = user.role;
+      }
+    }
+
+    const result = await executeMCPTool(toolName, args || {}, { role });
     return res.json({
       toolName,
       executedAt: new Date().toISOString(),

@@ -1,5 +1,5 @@
 import { orderflowClient } from '../clients/orderflowClient.js';
-import { mcpAuthorization } from '../auth/authorization.js';
+import { mcpAuthorization, AuthContext } from '../auth/authorization.js';
 import { mcpToolCallsTotal, mcpToolErrorsTotal, mcpToolDurationHistogram } from '../telemetry/mcpMetrics.js';
 
 export const WRITE_TOOLS_DEFINITIONS = [
@@ -10,7 +10,6 @@ export const WRITE_TOOLS_DEFINITIONS = [
       type: 'object',
       properties: {
         orderId: { type: 'string', description: 'Order ID to retry' },
-        userRole: { type: 'string', description: 'Caller user role (ADMIN or OPERATOR required)' },
         confirmationConfirmed: { type: 'boolean', description: 'Explicit human approval flag (must be true)' }
       },
       required: ['orderId', 'confirmationConfirmed']
@@ -23,7 +22,6 @@ export const WRITE_TOOLS_DEFINITIONS = [
       type: 'object',
       properties: {
         messageId: { type: 'string', description: 'DLQ Message ID' },
-        userRole: { type: 'string', description: 'Caller user role (ADMIN or OPERATOR required)' },
         confirmationConfirmed: { type: 'boolean', description: 'Explicit human approval flag (must be true)' }
       },
       required: ['messageId', 'confirmationConfirmed']
@@ -36,7 +34,6 @@ export const WRITE_TOOLS_DEFINITIONS = [
       type: 'object',
       properties: {
         eventId: { type: 'string', description: 'Outbox Event ID' },
-        userRole: { type: 'string', description: 'Caller user role' },
         confirmationConfirmed: { type: 'boolean', description: 'Explicit human approval flag' }
       },
       required: ['eventId', 'confirmationConfirmed']
@@ -49,7 +46,6 @@ export const WRITE_TOOLS_DEFINITIONS = [
       type: 'object',
       properties: {
         serviceName: { type: 'string', description: 'Target service circuit breaker (e.g. payment-service)' },
-        userRole: { type: 'string', description: 'Caller user role' },
         confirmationConfirmed: { type: 'boolean', description: 'Explicit human approval flag' }
       },
       required: ['serviceName', 'confirmationConfirmed']
@@ -57,15 +53,18 @@ export const WRITE_TOOLS_DEFINITIONS = [
   }
 ];
 
-export async function handleWriteToolCall(name: string, args: any) {
+export async function handleWriteToolCall(name: string, args: any, authContext?: AuthContext) {
   const startTime = Date.now();
   mcpToolCallsTotal.inc({ tool_name: name, status: 'STARTED' });
 
-  // 1. Authorization & Human Confirmation Guard Check
+  // Security Protection: Never trust untrusted tool arguments for user role authorization.
+  // Role must derive from verified AuthContext or explicit authenticated session.
+  const effectiveRole = authContext?.role || 'VIEWER';
+
   const authCheck = mcpAuthorization.validateToolExecution({
     toolName: name,
     permissionRequired: 'WRITE',
-    authContext: { role: args.userRole || 'VIEWER' },
+    authContext: { role: effectiveRole },
     confirmationConfirmed: args.confirmationConfirmed === true
   });
 
