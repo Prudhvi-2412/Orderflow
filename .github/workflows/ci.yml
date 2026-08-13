@@ -33,6 +33,7 @@ jobs:
           --health-interval 10s
           --health-timeout 5s
           --health-retries 10
+
     steps:
       - name: Checkout Source Code
         uses: actions/checkout@v4
@@ -51,9 +52,25 @@ jobs:
 
       - name: Apply Database Schema Migrations
         run: npm run db:migrate
+        env:
+          DATABASE_URL: postgresql://postgres:postgres@localhost:5432/orderflow
+          PGHOST: localhost
+          PGPORT: 5432
+          PGUSER: postgres
+          PGPASSWORD: postgres
+          PGDATABASE: orderflow
 
       - name: Run Jest Unit & Integration Test Suite
         run: npm test
+        env:
+          NODE_OPTIONS: --experimental-vm-modules
+          DATABASE_URL: postgresql://postgres:postgres@localhost:5432/orderflow
+          REDIS_URL: redis://localhost:6379
+          PGHOST: localhost
+          PGPORT: 5432
+          PGUSER: postgres
+          PGPASSWORD: postgres
+          PGDATABASE: orderflow
 
   docker-verify:
     name: Verify Docker Container Build
