@@ -1,0 +1,19 @@
+name: Deploy OrderFlow Services
+
+on:
+  workflow_run:
+    workflows: ["OrderFlow CI/CD Pipeline"]
+    branches: [main, master]
+    types:
+      - completed
+
+jobs:
+  deploy:
+    name: Trigger Render Auto-Deploy
+    runs-on: ubuntu-latest
+    if: ${{ github.event.workflow_run.conclusion == 'success' }}
+
+    steps:
+      - name: Notify CI Status
+        run: |
+          echo "✅ CI/CD Pipeline passed successfully! Render will auto-deploy the latest commit."
