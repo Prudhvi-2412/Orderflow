@@ -8,7 +8,7 @@ export class OrderFlowWebSocketServer {
   initialize(server: Server): void {
     this.wss = new WebSocketServer({ server, path: '/ws' });
 
-    this.wss.on('connection', (ws) => {
+    this.wss.on('connection', (ws: WebSocket) => {
       this.clients.add(ws);
       console.log(`🔌 [WebSocket] Client connected. Total active connections: ${this.clients.size}`);
 
@@ -24,7 +24,7 @@ export class OrderFlowWebSocketServer {
         console.log(`🔌 [WebSocket] Client disconnected. Total active connections: ${this.clients.size}`);
       });
 
-      ws.on('error', (err) => {
+      ws.on('error', (err: Error) => {
         console.error('❌ [WebSocket] Client Error:', err.message);
         this.clients.delete(ws);
       });

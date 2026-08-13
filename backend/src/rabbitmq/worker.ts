@@ -13,7 +13,7 @@ export async function startNotificationWorker() {
 
   channel.consume(
     RABBITMQ_QUEUES.NOTIFICATION,
-    async (msg) => {
+    async (msg: any) => {
       if (!msg) return;
 
       let task: NotificationTaskPayload;
