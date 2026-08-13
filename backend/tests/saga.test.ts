@@ -5,6 +5,15 @@ import { pool } from '../src/config/db.js';
 
 describe('Event-Driven Saga Orchestration & Compensating Workflows', () => {
 
+  beforeAll(async () => {
+    // Seed SKU in database inventory table to ensure test queries succeed
+    await pool.query(
+      `INSERT INTO inventory (sku, name, stock_quantity, version)
+       VALUES ('ITEM-IPHONE-15', 'iPhone 15 Pro', 10000, 1)
+       ON CONFLICT (sku) DO UPDATE SET stock_quantity = 10000`
+    );
+  });
+
   beforeEach(() => {
     paymentService.setChaos(0, false);
   });

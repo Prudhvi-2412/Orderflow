@@ -3,6 +3,8 @@ import dotenv from 'dotenv';
 
 dotenv.config();
 
+process.env.KAFKAJS_NO_PARTITIONER_WARNING = '1';
+
 const brokerStr = process.env.KAFKA_BROKER || process.env.KAFKA_BROKERS || 'localhost:9092';
 const brokers = brokerStr.split(',').map((b) => b.trim());
 

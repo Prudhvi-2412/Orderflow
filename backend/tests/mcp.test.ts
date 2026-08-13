@@ -8,10 +8,18 @@ describe('OrderFlow MCP AI Operations Tools & Resources Test Suite', () => {
   const testOrderId = `ORD-MCP-TEST-${Date.now()}`;
 
   beforeAll(async () => {
+    // Seed SKU in database inventory table
+    await pool.query(
+      `INSERT INTO inventory (sku, name, stock_quantity, version)
+       VALUES ('ITEM-IPHONE-15', 'iPhone 15 Pro', 1000, 1)
+       ON CONFLICT (sku) DO UPDATE SET stock_quantity = 1000`
+    );
+
     // Seed test order
     await pool.query(
       `INSERT INTO orders (order_id, customer_email, total_amount, status, lock_strategy)
-       VALUES ($1, 'mcp.user@orderflow.io', 999.00, 'CANCELLED', 'PESSIMISTIC')`,
+       VALUES ($1, 'mcp.user@orderflow.io', 999.00, 'CANCELLED', 'PESSIMISTIC')
+       ON CONFLICT (order_id) DO NOTHING`,
       [testOrderId]
     );
   });
