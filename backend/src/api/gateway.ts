@@ -203,7 +203,7 @@ apiRouter.get('/services/health', async (req, res) => {
       details: {
         type: 'Relational ACID Database',
         connection: pgHealthy ? 'Connected' : 'Disconnected',
-        pool: `${pgPoolUsed} / ${pool.max}`,
+        pool: `${pgPoolUsed} / ${(pool as any).options?.max || 20}`,
         latency: `${pgLatency} ms`,
         database: 'orderflow',
         lastQuery: 'SELECT 1',

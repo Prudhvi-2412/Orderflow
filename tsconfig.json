@@ -12,5 +12,6 @@
     "outDir": "./dist",
     "rootDir": "./"
   },
-  "include": ["src/**/*", "backend/**/*"]
+  "include": ["src/**/*", "backend/src/**/*", "mcp-server/src/**/*"],
+  "exclude": ["node_modules", "dist", "backend/tests", "k6"]
 }

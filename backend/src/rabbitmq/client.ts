@@ -1,4 +1,4 @@
-import amqp, { Connection, Channel } from 'amqplib';
+import amqp from 'amqplib';
 import dotenv from 'dotenv';
 
 dotenv.config();
@@ -19,11 +19,11 @@ export const RABBITMQ_ROUTING_KEYS = {
 };
 
 export class OrderFlowRabbitMQ {
-  private connection: Connection | null = null;
-  private channel: Channel | null = null;
+  private connection: any = null;
+  private channel: any = null;
   private isConnected = false;
 
-  async connect(): Promise<Channel | null> {
+  async connect(): Promise<any> {
     if (this.isConnected && this.channel) {
       return this.channel;
     }
@@ -32,7 +32,11 @@ export class OrderFlowRabbitMQ {
 
     try {
       this.connection = await amqp.connect(url);
+      if (!this.connection) return null;
+
       this.channel = await this.connection.createChannel();
+      if (!this.channel) return null;
+
       this.isConnected = true;
 
       // 1. Declare Main Exchange & Dead Letter Exchange (DLX)

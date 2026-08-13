@@ -1,5 +1,5 @@
-import { CircuitBreaker } from '../src/resilience/circuitBreaker.ts';
-import { chaosInjector } from '../src/resilience/chaosInjector.ts';
+import { CircuitBreaker } from '../src/resilience/circuitBreaker.js';
+import { chaosInjector } from '../src/resilience/chaosInjector.js';
 import { paymentService } from '../src/services/paymentService.js';
 
 describe('Resilience Engine & 3-State Circuit Breaker Tests', () => {

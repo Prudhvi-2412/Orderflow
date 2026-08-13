@@ -103,10 +103,10 @@ describe('OrderFlow MCP AI Operations Tools & Resources Test Suite', () => {
   });
 
   it('MCP Resources: handleReadResource should return structured resources', async () => {
-    const arch = await handleReadResource('orderflow://architecture');
+    const arch: any = await handleReadResource('orderflow://architecture');
     expect(arch.architecture).toContain('Event-Driven');
 
-    const topics = await handleReadResource('orderflow://kafka/topics');
+    const topics: any = await handleReadResource('orderflow://kafka/topics');
     expect(topics.topics).toContain('OrderCreated');
   });
 

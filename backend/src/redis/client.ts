@@ -1,8 +1,9 @@
-import Redis from 'ioredis';
+import RedisPkg from 'ioredis';
 import dotenv from 'dotenv';
 
 dotenv.config();
 
+const Redis = (RedisPkg as any).default || RedisPkg;
 const redisUrl = process.env.REDIS_URL || 'redis://localhost:6379';
 
 export const redis = new Redis(redisUrl, {
@@ -18,7 +19,7 @@ redis.on('connect', () => {
   console.log('✅ Real Redis Client Connected.');
 });
 
-redis.on('error', (err) => {
+redis.on('error', (err: any) => {
   if (!isConnected) {
     console.warn(`[Redis Warning] Unable to connect to Redis at ${redisUrl} (${err.message}). Using database fallback mode.`);
   }
