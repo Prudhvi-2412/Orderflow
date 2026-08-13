@@ -13,7 +13,7 @@
     "db:migrate": "tsx backend/src/db/migrate.ts",
     "db:seed": "tsx backend/src/db/seed.ts",
     "mcp:server": "tsx watch mcp-server/src/server.ts",
-    "test": "node --experimental-vm-modules node_modules/jest/bin/jest.js --passWithNoTests",
+    "test": "node --experimental-vm-modules node_modules/jest/bin/jest.js --config jest.config.js --passWithNoTests",
     "test:load": "k6 run k6/flash_sale_load_test.ts"
   },
   "dependencies": {
