@@ -8,6 +8,8 @@ export interface SystemNotification {
   isoTime: string;
 }
 
+export type NotificationItem = SystemNotification;
+
 export class NotificationService {
   public notifications: SystemNotification[] = [];
 

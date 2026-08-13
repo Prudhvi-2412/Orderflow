@@ -1,14 +1,29 @@
 import { trace, Tracer, Span } from '@opentelemetry/api';
-import { NodeTracerProvider } from '@opentelemetry/sdk-trace-node';
+import { NodeTracerProvider, SimpleSpanProcessor } from '@opentelemetry/sdk-trace-node';
 import { Resource } from '@opentelemetry/resources';
 import { SemanticResourceAttributes } from '@opentelemetry/semantic-conventions';
+import dotenv from 'dotenv';
+
+dotenv.config();
+
+const serviceName = process.env.OTEL_SERVICE_NAME || 'orderflow-distributed-engine';
 
 const provider = new NodeTracerProvider({
   resource: new Resource({
-    [SemanticResourceAttributes.SERVICE_NAME]: 'orderflow-distributed-engine',
+    [SemanticResourceAttributes.SERVICE_NAME]: serviceName,
     [SemanticResourceAttributes.SERVICE_VERSION]: '1.0.0'
   })
 });
+
+// Custom OTLP Exporter helper for Honeycomb / Jaeger OTLP endpoint
+const otlpEndpoint = process.env.OTEL_EXPORTER_OTLP_ENDPOINT || 'http://localhost:4318';
+const honeycombApiKey = process.env.HONEYCOMB_API_KEY;
+
+if (honeycombApiKey) {
+  console.log(`📡 [OpenTelemetry] Exporting traces to Honeycomb.io (${otlpEndpoint})`);
+} else {
+  console.log(`📡 [OpenTelemetry] Local Tracing initialized for ${serviceName}`);
+}
 
 provider.register();
 

@@ -1,5 +1,5 @@
-import { tracePropagator } from '../src/tracing/context.ts';
-import { traceSpan } from '../src/tracing/telemetry.ts';
+import { tracePropagator } from '../src/tracing/context.js';
+import { traceSpan } from '../src/tracing/telemetry.js';
 
 describe('OpenTelemetry & W3C Distributed Tracing Tests', () => {
 

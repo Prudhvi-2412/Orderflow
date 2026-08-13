@@ -213,7 +213,7 @@ export class OrderService {
       globalIdempotencyManager.complete(idempotencyKey, finalResponse);
       globalMetrics.record('OrderService', Date.now() - startTime, true);
 
-      await globalEventBus.publish('OrderCompleted', { orderId, ...finalResponse }, { sagaId: orderId });
+      await globalEventBus.publish('OrderCompleted', { ...finalResponse }, { sagaId: orderId });
       return sagaState;
     } catch (err: any) {
       sagaState.status = 'FAILED';

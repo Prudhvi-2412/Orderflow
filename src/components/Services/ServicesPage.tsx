@@ -25,7 +25,7 @@ export interface ServiceDetail {
 export interface ServiceHealthItem {
   id: string;
   name: string;
-  status: 'HEALTHY' | 'DEGRADED' | 'DOWN' | 'UNKNOWN';
+  status: 'HEALTHY' | 'DEGRADED' | 'DOWN' | 'UNKNOWN' | 'UNAVAILABLE';
   latencyMs: number;
   requestsCount: number;
   uptime: string;
