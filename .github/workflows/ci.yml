@@ -63,7 +63,6 @@ jobs:
       - name: Run Jest Unit & Integration Test Suite
         run: npm test
         env:
-          NODE_OPTIONS: --experimental-vm-modules
           DATABASE_URL: postgresql://postgres:postgres@localhost:5432/orderflow
           REDIS_URL: redis://localhost:6379
           PGHOST: localhost
