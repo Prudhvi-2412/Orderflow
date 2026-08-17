@@ -3,6 +3,10 @@ import { pool } from '../src/config/db.js';
 
 describe('Idempotent Kafka Consumer & processed_events Guard Tests', () => {
 
+  afterAll(async () => {
+    await pool.end();
+  });
+
   it('should execute handler exactly once and skip subsequent duplicate Kafka events', async () => {
     const rawHandler = jest.fn().mockResolvedValue(undefined);
     const consumerGroup = 'test-payment-consumer-group';

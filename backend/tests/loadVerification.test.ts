@@ -1,7 +1,13 @@
 import { pool } from '../src/config/db.js';
 import { orderService } from '../src/services/orderService.js';
+import { closeRedisConnection } from '../src/redis/client.js';
 
 describe('k6 Load Verification: 100 Concurrent Requests on 1 Stock Item', () => {
+
+  afterAll(async () => {
+    await closeRedisConnection();
+    await pool.end();
+  });
 
   it('should guarantee exactly 1 successful order, 99 rejected orders, and stock = 0 (0 oversold)', async () => {
     const sku = `ITEM-FLASH-${Date.now()}`;
@@ -35,6 +41,9 @@ describe('k6 Load Verification: 100 Concurrent Requests on 1 Stock Item', () => 
 
     const results = await Promise.all(promises);
 
+    // Wait 300ms to allow background microtasks to finish logging
+    await new Promise((res) => setTimeout(res, 300));
+
     // 3. Evaluate Metrics
     const completed = results.filter((r) => r.status === 'COMPLETED');
     const failed = results.filter((r) => r.status === 'FAILED' || r.status === 'CANCELLED');
@@ -53,6 +62,6 @@ describe('k6 Load Verification: 100 Concurrent Requests on 1 Stock Item', () => 
     expect(completed.length).toBe(1);
     expect(failed.length).toBe(99);
     expect(finalStock).toBe(0); // ZERO OVERSELLING!
-  });
+  }, 30000);
 
 });

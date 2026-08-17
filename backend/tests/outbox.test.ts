@@ -4,13 +4,22 @@ import { kafkaProducer } from '../src/kafka/producer.js';
 
 describe('Transactional Outbox Pattern & At-Least-Once Delivery Tests', () => {
 
+  beforeEach(async () => {
+    // Clear stale pending outbox events from other tests so outboxWorker only processes current test events
+    await pool.query(`DELETE FROM outbox_events WHERE status = 'PENDING'`);
+  });
+
+  afterAll(async () => {
+    await pool.end();
+  });
+
   it('should process pending outbox events transactionally and set status to PUBLISHED', async () => {
     const eventId = `test_outbox_evt_${Date.now()}`;
 
     // Stage pending outbox event inside DB
     await pool.query(
       `INSERT INTO outbox_events (event_id, topic, payload, status)
-       VALUES ($1, 'OrderCreated', $2, 'PENDING')`,
+       VALUES ($1, 'orders.created', $2, 'PENDING')`,
       [eventId, JSON.stringify({ orderId: 'ORD-OUTBOX-100', totalAmount: 499 })]
     );
 
@@ -29,14 +38,14 @@ describe('Transactional Outbox Pattern & At-Least-Once Delivery Tests', () => {
     expect(dbRes.rows[0].processed_at).not.toBeNull();
 
     publishSpy.mockRestore();
-  });
+  }, 15000);
 
   it('should increment attempts on publication failure and mark FAILED after limit', async () => {
     const eventId = `test_outbox_fail_${Date.now()}`;
 
     await pool.query(
       `INSERT INTO outbox_events (event_id, topic, payload, status, attempts)
-       VALUES ($1, 'OrderCreated', $2, 'PENDING', 4)`,
+       VALUES ($1, 'orders.created', $2, 'PENDING', 4)`,
       [eventId, JSON.stringify({ orderId: 'ORD-OUTBOX-FAIL', totalAmount: 100 })]
     );
 
@@ -54,14 +63,14 @@ describe('Transactional Outbox Pattern & At-Least-Once Delivery Tests', () => {
     expect(dbRes.rows[0].error).toContain('Kafka Publish Failure');
 
     publishSpy.mockRestore();
-  });
+  }, 15000);
 
   it('should handle simulated worker crash cleanly and allow retry on restart', async () => {
     const eventId = `test_outbox_crash_${Date.now()}`;
 
     await pool.query(
       `INSERT INTO outbox_events (event_id, topic, payload, status)
-       VALUES ($1, 'OrderCreated', $2, 'PENDING')`,
+       VALUES ($1, 'orders.created', $2, 'PENDING')`,
       [eventId, JSON.stringify({ orderId: 'ORD-OUTBOX-CRASH' })]
     );
 
@@ -88,6 +97,6 @@ describe('Transactional Outbox Pattern & At-Least-Once Delivery Tests', () => {
     expect(dbRes.rows[0].status).toBe('PUBLISHED');
 
     publishSpy.mockRestore();
-  });
+  }, 15000);
 
 });

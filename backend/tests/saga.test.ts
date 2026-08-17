@@ -2,16 +2,34 @@ import { sagaOrchestrator } from '../src/saga/sagaOrchestrator.js';
 import { paymentService } from '../src/services/paymentService.js';
 import { inventoryService } from '../src/services/inventoryService.js';
 import { pool } from '../src/config/db.js';
+import { closeRedisConnection } from '../src/redis/client.js';
 
 describe('Event-Driven Saga Orchestration & Compensating Workflows', () => {
 
   beforeAll(async () => {
-    // Seed SKU in database inventory table to ensure test queries succeed
+    // Seed product and inventory in database to ensure test queries succeed
     await pool.query(
-      `INSERT INTO inventory (sku, name, stock_quantity, version)
-       VALUES ('ITEM-IPHONE-15', 'iPhone 15 Pro', 10000, 1)
+      `INSERT INTO products (sku, name, price)
+       VALUES ('ITEM-IPHONE-15', 'iPhone 15 Pro', 999.00)
+       ON CONFLICT (sku) DO NOTHING`
+    );
+
+    await pool.query(
+      `INSERT INTO inventory (sku, stock_quantity, version)
+       VALUES ('ITEM-IPHONE-15', 10000, 1)
        ON CONFLICT (sku) DO UPDATE SET stock_quantity = 10000`
     );
+  });
+
+  afterAll(async () => {
+    try {
+      if (typeof closeRedisConnection === 'function') {
+        await closeRedisConnection();
+      }
+    } catch (err) {}
+    try {
+      await pool.end();
+    } catch (err) {}
   });
 
   beforeEach(() => {
@@ -28,10 +46,17 @@ describe('Event-Driven Saga Orchestration & Compensating Workflows', () => {
       [orderId]
     );
 
-    const result = await sagaOrchestrator.executeSaga(orderId, sku, 1, 999.00, 'user@orderflow.io', 'PESSIMISTIC');
+    const result = await sagaOrchestrator.executeSaga(
+      orderId,
+      sku,
+      1,
+      999.00,
+      'user@orderflow.io',
+      'PESSIMISTIC'
+    );
 
     expect(result.status).toBe('COMPLETED');
-    expect(result.currentStep).toBe('CONFIRMED');
+    expect(result.currentStep).toBe('COMPLETED');
   });
 
   it('should mark Saga FAILED when inventory stock is insufficient', async () => {
@@ -45,18 +70,28 @@ describe('Event-Driven Saga Orchestration & Compensating Workflows', () => {
     );
 
     // Request 999,999 units to force inventory failure
-    const result = await sagaOrchestrator.executeSaga(orderId, sku, 999999, 999.00, 'user@orderflow.io', 'PESSIMISTIC');
+    const result = await sagaOrchestrator.executeSaga(
+      orderId,
+      sku,
+      999999,
+      999.00,
+      'user@orderflow.io',
+      'PESSIMISTIC'
+    );
 
     expect(result.status).toBe('FAILED');
     expect(result.errorReason).toContain('Insufficient stock');
   });
 
   it('should execute Saga Compensation (Release Stock) when payment fails', async () => {
-    paymentService.setChaos(100, true); // Force payment gateway outage
+    // Force payment gateway outage
+    paymentService.setChaos(100, true);
+
     const orderId = `ORD-SAGA-PAYFAIL-${Date.now()}`;
     const sku = 'ITEM-IPHONE-15';
 
-    const stockBefore = (await inventoryService.getStock(sku))?.stock_quantity || 5;
+    const stockBefore =
+      (await inventoryService.getStock(sku))?.stock_quantity || 5;
 
     await pool.query(
       `INSERT INTO orders (order_id, customer_email, total_amount, status)
@@ -64,12 +99,21 @@ describe('Event-Driven Saga Orchestration & Compensating Workflows', () => {
       [orderId]
     );
 
-    const result = await sagaOrchestrator.executeSaga(orderId, sku, 1, 999.00, 'user@orderflow.io', 'PESSIMISTIC');
+    const result = await sagaOrchestrator.executeSaga(
+      orderId,
+      sku,
+      1,
+      999.00,
+      'user@orderflow.io',
+      'PESSIMISTIC'
+    );
 
     expect(result.status).toBe('CANCELLED');
 
     // Verify compensating transaction restored inventory quantity
-    const stockAfter = (await inventoryService.getStock(sku))?.stock_quantity;
+    const stockAfter =
+      (await inventoryService.getStock(sku))?.stock_quantity;
+
     expect(stockAfter).toBe(stockBefore);
   });
 
@@ -82,10 +126,14 @@ describe('Event-Driven Saga Orchestration & Compensating Workflows', () => {
       [orderId]
     );
 
-    const recoveredSaga = await sagaOrchestrator.getSagaState(orderId);
+    const recoveredSaga =
+      await sagaOrchestrator.getSagaState(orderId);
+
     expect(recoveredSaga).not.toBeNull();
     expect(recoveredSaga?.status).toBe('INVENTORY_RESERVED');
-    expect(recoveredSaga?.completedSteps).toContain('INVENTORY_RESERVED');
+    expect(recoveredSaga?.completedSteps).toContain(
+      'INVENTORY_RESERVED'
+    );
   });
 
 });

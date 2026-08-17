@@ -1,8 +1,16 @@
 import request from 'supertest';
 import app from '../src/server.js';
 import { authService } from '../src/services/authService.js';
+import { pool } from '../src/config/db.js';
+import { closeRedisConnection } from '../src/redis/client.js';
 
 describe('Email & Password Authentication API Suite', () => {
+
+  afterAll(async () => {
+    await closeRedisConnection();
+    await pool.end();
+  });
+
   beforeEach(() => {
     authService.clearAll();
   });

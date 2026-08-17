@@ -1,7 +1,12 @@
 import { idempotencyService } from '../src/services/idempotencyService.js';
+import { closeRedisConnection } from '../src/redis/client.js';
 import { pool } from '../src/config/db.js';
 
 describe('HTTP Idempotency Key & Concurrent Ownership Tests', () => {
+
+  afterAll(async () => {
+    await closeRedisConnection();
+  });
 
   it('should allow first request execution and serve cached response on duplicate request', async () => {
     const key = `test_key_first_${Date.now()}`;

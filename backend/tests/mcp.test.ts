@@ -2,16 +2,22 @@ import { executeMCPTool, getMCPToolsList, getMCPResourcesList } from '../../mcp-
 import { handleReadResource } from '../../mcp-server/src/resources/resources.js';
 import { mcpAuthorization } from '../../mcp-server/src/auth/authorization.js';
 import { pool } from '../src/config/db.js';
+import { closeRedisConnection } from '../src/redis/client.js';
 
 describe('OrderFlow MCP AI Operations Tools & Resources Test Suite', () => {
 
   const testOrderId = `ORD-MCP-TEST-${Date.now()}`;
 
   beforeAll(async () => {
-    // Seed SKU in database inventory table
+    // Seed product and inventory
     await pool.query(
-      `INSERT INTO inventory (sku, name, stock_quantity, version)
-       VALUES ('ITEM-IPHONE-15', 'iPhone 15 Pro', 1000, 1)
+      `INSERT INTO products (sku, name, price)
+       VALUES ('ITEM-IPHONE-15', 'iPhone 15 Pro', 999.00)
+       ON CONFLICT (sku) DO NOTHING`
+    );
+    await pool.query(
+      `INSERT INTO inventory (sku, stock_quantity, version)
+       VALUES ('ITEM-IPHONE-15', 1000, 1)
        ON CONFLICT (sku) DO UPDATE SET stock_quantity = 1000`
     );
 
@@ -22,6 +28,11 @@ describe('OrderFlow MCP AI Operations Tools & Resources Test Suite', () => {
        ON CONFLICT (order_id) DO NOTHING`,
       [testOrderId]
     );
+  });
+
+  afterAll(async () => {
+    await closeRedisConnection();
+    await pool.end();
   });
 
   it('should register both READ and WRITE MCP tools', () => {

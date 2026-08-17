@@ -1,7 +1,11 @@
-import { RABBITMQ_EXCHANGES, RABBITMQ_QUEUES, RABBITMQ_ROUTING_KEYS } from '../src/rabbitmq/client.js';
+import { RABBITMQ_EXCHANGES, RABBITMQ_QUEUES, RABBITMQ_ROUTING_KEYS, rabbitMQClient } from '../src/rabbitmq/client.js';
 import { rabbitMQProducer } from '../src/rabbitmq/producer.js';
 
 describe('RabbitMQ Task Queue & Dead Letter Queue (DLQ) Topology Tests', () => {
+
+  afterAll(async () => {
+    await rabbitMQClient.close();
+  });
 
   it('should verify core RabbitMQ topology names and Dead Letter Exchange configurations', () => {
     expect(RABBITMQ_EXCHANGES.ORDERS).toBe('orders_exchange');

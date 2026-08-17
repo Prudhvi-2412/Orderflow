@@ -1,7 +1,14 @@
 import { inventoryService } from '../src/services/inventoryService.js';
 import { orderService } from '../src/services/orderService.js';
+import { pool } from '../src/config/db.js';
+import { closeRedisConnection } from '../src/redis/client.js';
 
 describe('PostgreSQL Concurrency Control & SELECT FOR UPDATE Tests', () => {
+
+  afterAll(async () => {
+    await closeRedisConnection();
+    await pool.end();
+  });
 
   it('should guarantee zero overselling when 10 concurrent requests buy 1 stock item', async () => {
     // 1. Initial setup: 1 stock item available

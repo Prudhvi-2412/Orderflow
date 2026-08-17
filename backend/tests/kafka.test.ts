@@ -4,6 +4,10 @@ import { OrderFlowKafkaConsumer } from '../src/kafka/consumer.js';
 
 describe('Apache Kafka Producer & Consumer Abstraction Tests', () => {
 
+  afterAll(async () => {
+    await kafkaProducer.disconnect();
+  });
+
   it('should define all 8 core Kafka lifecycle topics correctly', () => {
     expect(KAFKA_TOPICS.ORDERS_CREATED).toBe('orders.created');
     expect(KAFKA_TOPICS.INVENTORY_RESERVED).toBe('inventory.reserved');

@@ -5,7 +5,11 @@ dotenv.config();
 
 const { Pool } = pg;
 
-const dbUrl = process.env.DATABASE_URL || 'postgresql://postgres:postgres@localhost:5432/orderflow';
+let dbUrl = process.env.DATABASE_URL || 'postgresql://postgres:postgres@localhost:5432/orderflow';
+if (dbUrl.includes('sslmode=require') && !dbUrl.includes('uselibpqcompat=true')) {
+  dbUrl = dbUrl.replace('sslmode=require', 'uselibpqcompat=true&sslmode=require');
+}
+
 const isCloud = dbUrl.includes('neon.tech') || dbUrl.includes('sslmode=require');
 
 export const pool = new Pool({
