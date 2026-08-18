@@ -148,7 +148,7 @@ apiRouter.get('/services/health', async (req, res) => {
     overallStatus = 'DEGRADED';
   }
 
-  const cbState = paymentService.circuitBreaker.getState();
+  const cbState = paymentService.circuitBreaker.getStatus();
 
   const services = [
     {
