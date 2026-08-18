@@ -198,7 +198,7 @@ export class OrderFlowClient {
 
     const totalOrdersCount = Object.values(orderStatusDistribution).reduce((sum: number, count: any) => sum + count, 0);
 
-    const cbState = paymentService.circuitBreaker.getState();
+    const cbState = paymentService.circuitBreaker.getStatus();
 
     return {
       timestamp: new Date().toISOString(),
