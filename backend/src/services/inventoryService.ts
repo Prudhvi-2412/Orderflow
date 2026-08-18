@@ -29,7 +29,7 @@ export class InventoryService {
       return {
         success: false,
         sku,
-        quantity,
+        quantity: quantity || 0,
         remainingStock: 0,
         strategy,
         error: 'Invalid quantity: quantity must be greater than 0'
@@ -62,32 +62,46 @@ export class InventoryService {
         await client.query('BEGIN');
       }
 
-      // 1. Check for existing reservation if orderId is provided (Idempotency Check)
+      // 1. Check existing reservation state for orderId (P0-2: State Machine Protection)
       if (orderId) {
         const existingRes = await client.query(
           `SELECT status, quantity FROM inventory_reservations WHERE order_id = $1 FOR UPDATE`,
           [orderId]
         );
 
-        if (existingRes.rows.length > 0 && existingRes.rows[0].status === 'RESERVED') {
-          const currentStockRes = await client.query(`SELECT stock_quantity FROM inventory WHERE sku = $1`, [sku]);
-          const remainingStock = currentStockRes.rows[0]?.stock_quantity ?? 0;
+        if (existingRes.rows.length > 0) {
+          const status = existingRes.rows[0].status;
+          if (status === 'RESERVED') {
+            const currentStockRes = await client.query(`SELECT stock_quantity FROM inventory WHERE sku = $1`, [sku]);
+            const remainingStock = currentStockRes.rows[0]?.stock_quantity ?? 0;
 
-          if (!isExternalClient) await client.query('COMMIT');
+            if (!isExternalClient) await client.query('COMMIT');
 
-          return {
-            success: true,
-            sku,
-            quantity: existingRes.rows[0].quantity,
-            remainingStock,
-            strategy: 'PESSIMISTIC',
-            orderId,
-            isDuplicate: true
-          };
+            return {
+              success: true,
+              sku,
+              quantity: existingRes.rows[0].quantity,
+              remainingStock,
+              strategy: 'PESSIMISTIC',
+              orderId,
+              isDuplicate: true
+            };
+          } else if (status === 'RELEASED') {
+            if (!isExternalClient) await client.query('ROLLBACK');
+            return {
+              success: false,
+              sku,
+              quantity,
+              remainingStock: 0,
+              strategy: 'PESSIMISTIC',
+              orderId,
+              error: `Reservation for order ${orderId} is RELEASED and cannot be re-reserved`
+            };
+          }
         }
       }
 
-      // 2. Lock the row exclusively with SELECT ... FOR UPDATE
+      // 2. Lock the inventory row exclusively with SELECT ... FOR UPDATE
       const res = await client.query(
         `SELECT stock_quantity FROM inventory WHERE sku = $1 FOR UPDATE`,
         [sku]
@@ -147,8 +161,7 @@ export class InventoryService {
       if (orderId) {
         await client.query(
           `INSERT INTO inventory_reservations (order_id, sku, quantity, status)
-           VALUES ($1, $2, $3, 'RESERVED')
-           ON CONFLICT (order_id) DO UPDATE SET status = 'RESERVED', updated_at = NOW()`,
+           VALUES ($1, $2, $3, 'RESERVED')`,
           [orderId, sku, quantity]
         );
       }
@@ -175,7 +188,7 @@ export class InventoryService {
   }
 
   /**
-   * OPTIMISTIC CONCURRENCY CONTROL (Compare-And-Swap Versioning)
+   * OPTIMISTIC CONCURRENCY CONTROL (Compare-And-Swap Versioning) (P1-2: Atomic CAS + Reservation)
    */
   private async reserveOptimistic(
     dbClient: pg.PoolClient | null,
@@ -187,23 +200,42 @@ export class InventoryService {
     const client = dbClient || (await pool.connect());
 
     try {
+      if (!isExternalClient) {
+        await client.query('BEGIN');
+      }
+
       if (orderId) {
         const existingRes = await client.query(
-          `SELECT status, quantity FROM inventory_reservations WHERE order_id = $1`,
+          `SELECT status, quantity FROM inventory_reservations WHERE order_id = $1 FOR UPDATE`,
           [orderId]
         );
 
-        if (existingRes.rows.length > 0 && existingRes.rows[0].status === 'RESERVED') {
-          const currentStockRes = await client.query(`SELECT stock_quantity FROM inventory WHERE sku = $1`, [sku]);
-          return {
-            success: true,
-            sku,
-            quantity: existingRes.rows[0].quantity,
-            remainingStock: currentStockRes.rows[0]?.stock_quantity ?? 0,
-            strategy: 'OPTIMISTIC',
-            orderId,
-            isDuplicate: true
-          };
+        if (existingRes.rows.length > 0) {
+          const status = existingRes.rows[0].status;
+          if (status === 'RESERVED') {
+            const currentStockRes = await client.query(`SELECT stock_quantity FROM inventory WHERE sku = $1`, [sku]);
+            if (!isExternalClient) await client.query('COMMIT');
+            return {
+              success: true,
+              sku,
+              quantity: existingRes.rows[0].quantity,
+              remainingStock: currentStockRes.rows[0]?.stock_quantity ?? 0,
+              strategy: 'OPTIMISTIC',
+              orderId,
+              isDuplicate: true
+            };
+          } else if (status === 'RELEASED') {
+            if (!isExternalClient) await client.query('ROLLBACK');
+            return {
+              success: false,
+              sku,
+              quantity,
+              remainingStock: 0,
+              strategy: 'OPTIMISTIC',
+              orderId,
+              error: `Reservation for order ${orderId} is RELEASED and cannot be re-reserved`
+            };
+          }
         }
       }
 
@@ -213,6 +245,7 @@ export class InventoryService {
       );
 
       if (res.rows.length === 0) {
+        if (!isExternalClient) await client.query('ROLLBACK');
         return {
           success: false,
           sku,
@@ -226,6 +259,7 @@ export class InventoryService {
       const { stock_quantity: currentStock, version } = res.rows[0];
 
       if (currentStock < quantity) {
+        if (!isExternalClient) await client.query('ROLLBACK');
         return {
           success: false,
           sku,
@@ -245,6 +279,7 @@ export class InventoryService {
       );
 
       if (updateRes.rows.length === 0) {
+        if (!isExternalClient) await client.query('ROLLBACK');
         return {
           success: false,
           sku,
@@ -258,10 +293,13 @@ export class InventoryService {
       if (orderId) {
         await client.query(
           `INSERT INTO inventory_reservations (order_id, sku, quantity, status)
-           VALUES ($1, $2, $3, 'RESERVED')
-           ON CONFLICT (order_id) DO UPDATE SET status = 'RESERVED', updated_at = NOW()`,
+           VALUES ($1, $2, $3, 'RESERVED')`,
           [orderId, sku, quantity]
         );
+      }
+
+      if (!isExternalClient) {
+        await client.query('COMMIT');
       }
 
       return {
@@ -273,6 +311,9 @@ export class InventoryService {
         orderId
       };
 
+    } catch (err: any) {
+      if (!isExternalClient) await client.query('ROLLBACK');
+      throw err;
     } finally {
       if (!isExternalClient) client.release();
     }
@@ -287,8 +328,32 @@ export class InventoryService {
     quantity: number,
     orderId?: string
   ): Promise<ReservationResult> {
+    const isExternalClient = !!dbClient;
     const client = dbClient || (await pool.connect());
     try {
+      if (!isExternalClient) {
+        await client.query('BEGIN');
+      }
+
+      if (orderId) {
+        const existingRes = await client.query(
+          `SELECT status FROM inventory_reservations WHERE order_id = $1`,
+          [orderId]
+        );
+        if (existingRes.rows.length > 0 && existingRes.rows[0].status === 'RELEASED') {
+          if (!isExternalClient) await client.query('ROLLBACK');
+          return {
+            success: false,
+            sku,
+            quantity,
+            remainingStock: 0,
+            strategy: 'NONE',
+            orderId,
+            error: `Reservation for order ${orderId} is RELEASED and cannot be re-reserved`
+          };
+        }
+      }
+
       const updateRes = await client.query(
         `UPDATE inventory SET stock_quantity = stock_quantity - $1 WHERE sku = $2 RETURNING stock_quantity`,
         [quantity, sku]
@@ -303,6 +368,10 @@ export class InventoryService {
         );
       }
 
+      if (!isExternalClient) {
+        await client.query('COMMIT');
+      }
+
       return {
         success: true,
         sku,
@@ -311,8 +380,11 @@ export class InventoryService {
         strategy: 'NONE',
         orderId
       };
+    } catch (err) {
+      if (!isExternalClient) await client.query('ROLLBACK');
+      throw err;
     } finally {
-      if (!dbClient) client.release();
+      if (!isExternalClient) client.release();
     }
   }
 

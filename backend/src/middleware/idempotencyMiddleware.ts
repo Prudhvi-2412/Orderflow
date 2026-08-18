@@ -37,18 +37,20 @@ export async function idempotencyMiddleware(req: Request, res: Response, next: N
       return res.status(result.statusCode || 201).json(result.response);
     }
 
-    // Capture res.send to cache response body on completion
+    const claimToken = result.claimToken;
+
+    // Capture res.send to cache response body on completion using token-guarded updates
     const originalSend = res.send.bind(res);
     res.send = (body?: any): Response => {
       if (res.statusCode >= 200 && res.statusCode < 300) {
         try {
           const parsed = typeof body === 'string' ? JSON.parse(body) : body;
-          idempotencyService.complete(key, req.body, parsed).catch(console.error);
+          idempotencyService.complete(key, req.body, parsed, claimToken).catch(console.error);
         } catch (e) {
-          idempotencyService.complete(key, req.body, body).catch(console.error);
+          idempotencyService.complete(key, req.body, body, claimToken).catch(console.error);
         }
       } else {
-        idempotencyService.fail(key).catch(console.error);
+        idempotencyService.fail(key, claimToken).catch(console.error);
       }
       return originalSend(body);
     };

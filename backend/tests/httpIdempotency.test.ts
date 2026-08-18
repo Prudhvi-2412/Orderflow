@@ -29,7 +29,6 @@ describe('HTTP API Idempotency, Concurrency & Crash Recovery Test Suite', () => 
     const key = `idemp_active_pending_${Date.now()}`;
     const payload = { sku, quantity: 1, customerEmail: 'active@example.com' };
 
-    // Insert active PENDING key (started 5 seconds ago)
     await pool.query(
       `INSERT INTO idempotency_keys (key, request_hash, status, processing_started_at)
        VALUES ($1, $2, 'PENDING', NOW() - INTERVAL '5 seconds')`,
@@ -49,7 +48,6 @@ describe('HTTP API Idempotency, Concurrency & Crash Recovery Test Suite', () => 
     const key = `idemp_stale_crash_${Date.now()}`;
     const payload = { sku, quantity: 1, customerEmail: 'crash.recovered@example.com' };
 
-    // Simulate server crash: PENDING key stuck for 90 seconds
     await pool.query(
       `INSERT INTO idempotency_keys (key, request_hash, status, processing_started_at)
        VALUES ($1, $2, 'PENDING', NOW() - INTERVAL '90 seconds')`,
@@ -64,7 +62,6 @@ describe('HTTP API Idempotency, Concurrency & Crash Recovery Test Suite', () => 
     expect(res.status).toBe(201);
     expect(res.body.orderId).toBeDefined();
 
-    // Verify only 1 order created in DB
     const dbCount = await pool.query(`SELECT count(*) FROM orders WHERE customer_email = 'crash.recovered@example.com'`);
     expect(parseInt(dbCount.rows[0].count)).toBe(1);
   });
@@ -73,22 +70,20 @@ describe('HTTP API Idempotency, Concurrency & Crash Recovery Test Suite', () => 
     const key = `idemp_stale_concurrent_${Date.now()}`;
     const payload = { sku, quantity: 1, customerEmail: 'concurrent.crash@example.com' };
 
-    // Insert stale key (stuck for 120s)
     await pool.query(
       `INSERT INTO idempotency_keys (key, request_hash, status, processing_started_at)
        VALUES ($1, $2, 'PENDING', NOW() - INTERVAL '120 seconds')`,
       [key, idempotencyService.hashPayload(payload)]
     );
 
-    // Two concurrent requests attempt to recover the stale lease
     const [r1, r2] = await Promise.all([
       request(app).post('/api/orders').set('Idempotency-Key', key).send(payload),
       request(app).post('/api/orders').set('Idempotency-Key', key).send(payload)
     ]);
 
     const statuses = [r1.status, r2.status];
-    expect(statuses).toContain(201); // 1 request recovered & created order
-    expect(statuses).toContain(409); // 1 request got 409 Conflict
+    expect(statuses).toContain(201);
+    expect(statuses).toContain(409);
 
     const dbCount = await pool.query(`SELECT count(*) FROM orders WHERE customer_email = 'concurrent.crash@example.com'`);
     expect(parseInt(dbCount.rows[0].count)).toBe(1);
@@ -118,6 +113,42 @@ describe('HTTP API Idempotency, Concurrency & Crash Recovery Test Suite', () => 
     const res = await request(app).post('/api/orders').set('Idempotency-Key', key).send(payload);
     expect(res.status).toBe(201);
     expect(res.body.orderId).toBeDefined();
+  });
+
+  it('7. P1-1: Stale worker with lost claim_token cannot modify active idempotency record', async () => {
+    const key = `idemp_token_lease_${Date.now()}`;
+    const payload = { sku, quantity: 1, customerEmail: 'token.test@example.com' };
+    const staleToken = 'token-AAA-stale';
+
+    // Worker A claims key with token AAA (and becomes stale)
+    await pool.query(
+      `INSERT INTO idempotency_keys (key, request_hash, status, processing_started_at, claim_token)
+       VALUES ($1, $2, 'PENDING', NOW() - INTERVAL '100 seconds', $3)`,
+      [key, idempotencyService.hashPayload(payload), staleToken]
+    );
+
+    // Worker B recovers key with token BBB
+    const beginRes = await idempotencyService.begin(key, payload);
+    expect(beginRes.action).toBe('EXECUTE');
+    const activeToken = beginRes.claimToken;
+    expect(activeToken).toBeDefined();
+    expect(activeToken).not.toBe(staleToken);
+
+    // Stale Worker A attempts complete with token AAA -> 0 rows modified (returns false)
+    const staleCompleteSuccess = await idempotencyService.complete(key, payload, { result: 'stale' }, staleToken);
+    expect(staleCompleteSuccess).toBe(false);
+
+    // Stale Worker A attempts fail with token AAA -> 0 rows modified (returns false)
+    const staleFailSuccess = await idempotencyService.fail(key, staleToken);
+    expect(staleFailSuccess).toBe(false);
+
+    // Active Worker B completes with token BBB -> 1 row modified (returns true)
+    const activeCompleteSuccess = await idempotencyService.complete(key, payload, { result: 'valid' }, activeToken);
+    expect(activeCompleteSuccess).toBe(true);
+
+    const check = await pool.query(`SELECT status, response_body FROM idempotency_keys WHERE key = $1`, [key]);
+    expect(check.rows[0].status).toBe('COMPLETED');
+    expect(check.rows[0].response_body.result).toBe('valid');
   });
 
 });

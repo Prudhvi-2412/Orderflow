@@ -213,4 +213,40 @@ describe('Idempotent Inventory Concurrency & Compensation Test Suite', () => {
     expect(stockAfter).toBe(stockBefore + 3);
   });
 
+  it('15. P0-2 Regression: Reserve -> Release -> Retry Reserve rejects re-reservation & does NOT deduct stock', async () => {
+    const orderId = `ORD-RELEASED-RETRY-${Date.now()}`;
+    
+    // 1. Initial reservation
+    const res1 = await inventoryService.reserveStock(null, sku, 2, 'PESSIMISTIC', orderId);
+    expect(res1.success).toBe(true);
+
+    // 2. Release reservation (RESERVED -> RELEASED)
+    const rel = await inventoryService.releaseStock(sku, 2, orderId);
+    expect(rel.released).toBe(true);
+
+    const stockAfterRelease = (await inventoryService.getStock(sku)).stock_quantity;
+
+    // 3. Retry reserve for same orderId
+    const resRetry = await inventoryService.reserveStock(null, sku, 2, 'PESSIMISTIC', orderId);
+    expect(resRetry.success).toBe(false);
+    expect(resRetry.error).toContain('RELEASED and cannot be re-reserved');
+
+    // 4. Verify stock quantity is unchanged
+    const stockAfterRetry = (await inventoryService.getStock(sku)).stock_quantity;
+    expect(stockAfterRetry).toBe(stockAfterRelease);
+
+    // 5. Verify reservation status remains RELEASED in database
+    const dbCheck = await pool.query(`SELECT status FROM inventory_reservations WHERE order_id = $1`, [orderId]);
+    expect(dbCheck.rows[0].status).toBe('RELEASED');
+  });
+
+  it('16. P1-2: Optimistic reservation mutation and reservation creation are atomic inside transaction', async () => {
+    const optOrder = `ORD-OPT-ATOMIC-${Date.now()}`;
+    const optRes = await inventoryService.reserveStock(null, sku, 1, 'OPTIMISTIC', optOrder);
+    expect(optRes.success).toBe(true);
+
+    const dbCheck = await pool.query(`SELECT status FROM inventory_reservations WHERE order_id = $1`, [optOrder]);
+    expect(dbCheck.rows[0].status).toBe('RESERVED');
+  });
+
 });

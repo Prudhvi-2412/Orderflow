@@ -198,7 +198,8 @@ export class SagaOrchestrator {
   }
 
   /**
-   * Event-Driven Saga Step 2: Handle InventoryReserved Event -> Trigger Payment Outside DB Txn
+   * Event-Driven Saga Step 2: Handle InventoryReserved Event -> Trigger Payment Outside DB Txn,
+   * then finalize Payment + Order State + Outbox Event inside ONE PostgreSQL Transaction (P0-1)
    */
   async handleInventoryReserved(payload: { orderId: string; sku: string; quantity: number }) {
     const { orderId } = payload;
@@ -228,29 +229,61 @@ export class SagaOrchestrator {
         paymentIdempotencyKey
       );
 
-      // Record Payment & Finalize Order in DB
-      await pool.query(
-        `INSERT INTO payments (order_id, txn_id, idempotency_key, amount, status)
-         VALUES ($1, $2, $3, $4, 'SUCCESS')
-         ON CONFLICT (order_id) DO UPDATE SET status = 'SUCCESS', txn_id = EXCLUDED.txn_id, amount = EXCLUDED.amount`,
-        [orderId, paymentResult.txnId, paymentIdempotencyKey, saga.totalAmount]
-      );
+      // P0-1: ALL local DB mutations that finalize payment, order, and outbox event happen in ONE PostgreSQL transaction
+      const client = await pool.connect();
+      try {
+        await client.query('BEGIN');
 
-      const completed = await this.transitionState(orderId, 'COMPLETED');
-      if (completed) {
-        await pool.query(
-          `INSERT INTO outbox_events (event_id, topic, payload, status)
-           VALUES ($1, $2, $3, 'PENDING')
-           ON CONFLICT (event_id) DO NOTHING`,
-          [`evt_pay_ok_${orderId}`, KAFKA_TOPICS.ORDERS_CONFIRMED, JSON.stringify({
-            orderId,
-            txnId: paymentResult.txnId,
-            totalAmount: saga.totalAmount,
-            customerEmail: saga.customerEmail
-          })]
+        // 1. Persist payment result safely & idempotently
+        await client.query(
+          `INSERT INTO payments (order_id, txn_id, idempotency_key, amount, status)
+           VALUES ($1, $2, $3, $4, 'SUCCESS')
+           ON CONFLICT (order_id) DO UPDATE SET status = 'SUCCESS', txn_id = EXCLUDED.txn_id, amount = EXCLUDED.amount`,
+          [orderId, paymentResult.txnId, paymentIdempotencyKey, saga.totalAmount]
         );
 
+        // 2. Conditionally transition order: PAYMENT_PROCESSING -> COMPLETED
+        const completed = await this.transitionState(orderId, 'COMPLETED', undefined, client);
+
+        // 3. Stage outbox event using SAME stable event_id
+        if (completed) {
+          await client.query(
+            `INSERT INTO outbox_events (event_id, topic, payload, status)
+             VALUES ($1, $2, $3, 'PENDING')
+             ON CONFLICT (event_id) DO NOTHING`,
+            [`evt_pay_ok_${orderId}`, KAFKA_TOPICS.ORDERS_CONFIRMED, JSON.stringify({
+              orderId,
+              txnId: paymentResult.txnId,
+              totalAmount: saga.totalAmount,
+              customerEmail: saga.customerEmail
+            })]
+          );
+        } else {
+          // If order reached COMPLETED previously, ensure outbox event exists
+          const checkOrder = await client.query(`SELECT status FROM orders WHERE order_id = $1`, [orderId]);
+          if (checkOrder.rows[0]?.status === 'COMPLETED') {
+            await client.query(
+              `INSERT INTO outbox_events (event_id, topic, payload, status)
+               VALUES ($1, $2, $3, 'PENDING')
+               ON CONFLICT (event_id) DO NOTHING`,
+              [`evt_pay_ok_${orderId}`, KAFKA_TOPICS.ORDERS_CONFIRMED, JSON.stringify({
+                orderId,
+                txnId: paymentResult.txnId,
+                totalAmount: saga.totalAmount,
+                customerEmail: saga.customerEmail
+              })]
+            );
+          }
+        }
+
+        await client.query('COMMIT');
         console.log(`✅ [Saga Orchestrator] Saga Completed Successfully for Order ${orderId}.`);
+
+      } catch (dbErr: any) {
+        await client.query('ROLLBACK');
+        throw dbErr;
+      } finally {
+        client.release();
       }
 
     } catch (paymentErr: any) {
