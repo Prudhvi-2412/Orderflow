@@ -5,6 +5,7 @@ import { sagaOrchestrator } from '../../../backend/src/saga/sagaOrchestrator.js'
 import { kafkaProducer } from '../../../backend/src/kafka/producer.js';
 import { rabbitMQClient } from '../../../backend/src/rabbitmq/client.js';
 import { isRedisAvailable, redis } from '../../../backend/src/redis/client.js';
+import { paymentService } from '../../../backend/src/services/paymentService.js';
 
 export class OrderFlowClient {
   /**
@@ -134,15 +135,21 @@ export class OrderFlowClient {
    */
   async getServiceHealth() {
     let pgHealthy = false;
+    let pgLatency = 0;
+    const pgStart = Date.now();
     try {
       await pool.query('SELECT 1');
+      pgLatency = Date.now() - pgStart;
       pgHealthy = true;
     } catch (e) {}
 
     let redisHealthy = false;
+    let redisLatency = 0;
+    const redisStart = Date.now();
     try {
       if (isRedisAvailable()) {
         await redis.ping();
+        redisLatency = Date.now() - redisStart;
         redisHealthy = true;
       }
     } catch (e) {}
@@ -150,12 +157,20 @@ export class OrderFlowClient {
     const kafkaHealthy = kafkaProducer.isKafkaConnected();
     const rabbitmqHealthy = rabbitMQClient.getIsConnected();
 
+    let overallStatus: 'HEALTHY' | 'DEGRADED' | 'UNAVAILABLE' = 'HEALTHY';
+    if (!pgHealthy) {
+      overallStatus = 'UNAVAILABLE';
+    } else if (!redisHealthy || !kafkaHealthy || !rabbitmqHealthy) {
+      overallStatus = 'DEGRADED';
+    }
+
     return {
       timestamp: new Date().toISOString(),
-      overallStatus: pgHealthy && kafkaHealthy && rabbitmqHealthy ? 'HEALTHY' : 'DEGRADED',
+      processUptimeSeconds: Math.floor(process.uptime()),
+      overallStatus,
       services: {
-        postgresql: { status: pgHealthy ? 'HEALTHY' : 'UNAVAILABLE' },
-        redis: { status: redisHealthy ? 'HEALTHY' : 'UNAVAILABLE' },
+        postgresql: { status: pgHealthy ? 'HEALTHY' : 'UNAVAILABLE', latencyMs: pgHealthy ? pgLatency : 0 },
+        redis: { status: redisHealthy ? 'HEALTHY' : 'UNAVAILABLE', latencyMs: redisHealthy ? redisLatency : 0 },
         kafka: { status: kafkaHealthy ? 'HEALTHY' : 'UNAVAILABLE' },
         rabbitmq: { status: rabbitmqHealthy ? 'HEALTHY' : 'UNAVAILABLE' },
         apiGateway: { status: 'HEALTHY' }
@@ -176,16 +191,22 @@ export class OrderFlowClient {
       `SELECT status, count(*) FROM orders GROUP BY status`
     );
 
+    const orderStatusDistribution = ordersTotalRes.rows.reduce((acc: any, r: any) => {
+      acc[r.status] = parseInt(r.count);
+      return acc;
+    }, {});
+
+    const totalOrdersCount = Object.values(orderStatusDistribution).reduce((sum: number, count: any) => sum + count, 0);
+
+    const cbState = paymentService.circuitBreaker.getState();
+
     return {
       timestamp: new Date().toISOString(),
-      throughputRps: 873,
-      latenciesMs: { p50: 18, p95: 84, p99: 142 },
+      processUptimeSeconds: Math.floor(process.uptime()),
+      totalOrdersCount,
       pendingOutboxEvents: pendingOutbox,
-      circuitBreakerState: 'CLOSED',
-      orderStatusDistribution: ordersTotalRes.rows.reduce((acc: any, r: any) => {
-        acc[r.status] = parseInt(r.count);
-        return acc;
-      }, {})
+      circuitBreakerState: cbState,
+      orderStatusDistribution
     };
   }
 

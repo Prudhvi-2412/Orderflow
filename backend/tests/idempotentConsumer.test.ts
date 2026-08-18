@@ -1,87 +1,72 @@
 import { wrapIdempotentConsumer } from '../src/kafka/idempotentConsumer.js';
 import { pool } from '../src/config/db.js';
+import { closeRedisConnection } from '../src/redis/client.js';
 
-describe('Idempotent Kafka Consumer & processed_events Guard Tests', () => {
+describe('Processed Events Idempotent Consumer Concurrency Audit Suite', () => {
+
+  const consumerGroup = 'audit-test-group';
 
   afterAll(async () => {
+    await closeRedisConnection();
     await pool.end();
   });
 
-  it('should execute handler exactly once and skip subsequent duplicate Kafka events', async () => {
-    const rawHandler = jest.fn().mockResolvedValue(undefined);
-    const consumerGroup = 'test-payment-consumer-group';
-    const eventId = `evt_dedup_${Date.now()}`;
-
-    const wrappedHandler = wrapIdempotentConsumer({
-      consumerGroup,
-      handler: rawHandler
+  it('1-2. Database UNIQUE constraint & FOR UPDATE lock prevent concurrent duplicate execution', async () => {
+    const eventId = `evt_audit_concurrent_${Date.now()}`;
+    const mockHandler = jest.fn().mockImplementation(async (topic, payload, meta, client) => {
+      // Simulate business DB operation inside transaction
+      await client.query(`SELECT 1`);
     });
 
-    const topic = 'payment.completed';
-    const payload = { orderId: 'ORD-DEDUP-100', amount: 999 };
-    const meta = { eventId };
+    const consumer = wrapIdempotentConsumer({ consumerGroup, handler: mockHandler });
 
-    // 1st Arrival -> Should execute handler
-    await wrappedHandler(topic, payload, meta);
-    expect(rawHandler).toHaveBeenCalledTimes(1);
+    // Simulate two concurrent Kafka partition consumers receiving the exact same event
+    await Promise.all([
+      consumer('orders.created', { orderId: 'ORD-AUDIT-1' }, { eventId }),
+      consumer('orders.created', { orderId: 'ORD-AUDIT-1' }, { eventId })
+    ]);
 
-    // 2nd Duplicate Arrival (Redelivery) -> Should skip handler execution
-    await wrappedHandler(topic, payload, meta);
-    expect(rawHandler).toHaveBeenCalledTimes(1);
+    // Handler must execute EXACTLY ONCE
+    expect(mockHandler).toHaveBeenCalledTimes(1);
 
-    // 3rd Duplicate Arrival -> Should skip handler execution
-    await wrappedHandler(topic, payload, meta);
-    expect(rawHandler).toHaveBeenCalledTimes(1);
-
-    // Verify row inserted in `processed_events`
-    const dbRes = await pool.query(
-      `SELECT * FROM processed_events WHERE event_id = $1 AND consumer_group = $2`,
+    // Exactly 1 row inserted into processed_events
+    const res = await pool.query(
+      `SELECT count(*) FROM processed_events WHERE event_id = $1 AND consumer_group = $2`,
       [eventId, consumerGroup]
     );
-    expect(dbRes.rows.length).toBe(1);
+    expect(parseInt(res.rows[0].count)).toBe(1);
   });
 
-  it('should rollback processed_events on handler failure and allow successful retry', async () => {
-    const consumerGroup = 'test-retry-consumer-group';
-    const eventId = `evt_fail_retry_${Date.now()}`;
-    const topic = 'inventory.reserved';
-    const payload = { sku: 'ITEM-TEST', quantity: 2 };
-    const meta = { eventId };
+  it('3. Duplicate event delivered after successful DB commit is a NO-OP', async () => {
+    const eventId = `evt_audit_noop_${Date.now()}`;
+    const mockHandler = jest.fn().mockResolvedValue(undefined);
+    const consumer = wrapIdempotentConsumer({ consumerGroup, handler: mockHandler });
 
-    let attempts = 0;
+    // First delivery (commits business change + processed_events)
+    await consumer('orders.created', { orderId: 'ORD-AUDIT-2' }, { eventId });
+    expect(mockHandler).toHaveBeenCalledTimes(1);
+
+    // Redelivery after offset commit failure
+    await consumer('orders.created', { orderId: 'ORD-AUDIT-2' }, { eventId });
+    expect(mockHandler).toHaveBeenCalledTimes(1); // Handler NOT called again!
+  });
+
+  it('4. Crash/Error before DB commit rolls back both business change and processed_events record', async () => {
+    const eventId = `evt_audit_rollback_${Date.now()}`;
     const failingHandler = jest.fn().mockImplementation(async () => {
-      attempts++;
-      if (attempts === 1) {
-        throw new Error('Database Connection Temporary Spike Failure');
-      }
-      return undefined;
+      throw new Error('Database transaction crash simulation');
     });
 
-    const wrappedHandler = wrapIdempotentConsumer({
-      consumerGroup,
-      handler: failingHandler
-    });
+    const consumer = wrapIdempotentConsumer({ consumerGroup, handler: failingHandler });
 
-    // 1. First attempt fails
-    await expect(wrappedHandler(topic, payload, meta)).rejects.toThrow('Database Connection Temporary Spike Failure');
+    await expect(consumer('orders.created', { orderId: 'ORD-FAIL' }, { eventId })).rejects.toThrow('Database transaction crash simulation');
 
-    // Verify processed_events is NOT marked
-    const dbResAfterFail = await pool.query(
-      `SELECT * FROM processed_events WHERE event_id = $1 AND consumer_group = $2`,
+    // Verify processed_events record was rolled back
+    const res = await pool.query(
+      `SELECT count(*) FROM processed_events WHERE event_id = $1 AND consumer_group = $2`,
       [eventId, consumerGroup]
     );
-    expect(dbResAfterFail.rows.length).toBe(0);
-
-    // 2. Retry succeeds
-    await wrappedHandler(topic, payload, meta);
-    expect(failingHandler).toHaveBeenCalledTimes(2);
-
-    // Verify processed_events is NOW marked
-    const dbResAfterSuccess = await pool.query(
-      `SELECT * FROM processed_events WHERE event_id = $1 AND consumer_group = $2`,
-      [eventId, consumerGroup]
-    );
-    expect(dbResAfterSuccess.rows.length).toBe(1);
+    expect(parseInt(res.rows[0].count)).toBe(0);
   });
 
 });

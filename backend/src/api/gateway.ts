@@ -16,11 +16,86 @@ apiRouter.use('/auth', authRouter);
 apiRouter.use('/mcp', mcpRouter);
 
 /**
- * GET /api/health
+ * GET /api/health - Unified health check with truthful runtime dependency status
  */
-apiRouter.get('/health', (req, res) => {
-  res.json({ status: 'UP', service: 'OrderFlow Distributed API Gateway', timestamp: new Date().toISOString() });
+apiRouter.get('/health', async (req, res) => {
+  let pgHealthy = false;
+  try {
+    await pool.query('SELECT 1');
+    pgHealthy = true;
+  } catch (err) {
+    pgHealthy = false;
+  }
+
+  let redisHealthy = false;
+  try {
+    if (isRedisAvailable()) {
+      await redis.ping();
+      redisHealthy = true;
+    }
+  } catch (err) {
+    redisHealthy = false;
+  }
+
+  const kafkaHealthy = kafkaProducer.isKafkaConnected();
+  const rabbitmqHealthy = rabbitMQClient.getIsConnected();
+
+  const status = pgHealthy ? 'HEALTHY' : 'DEGRADED';
+  return res.status(pgHealthy ? 200 : 503).json({
+    status,
+    service: 'OrderFlow Distributed API Gateway',
+    processUptimeSeconds: Math.floor(process.uptime()),
+    timestamp: new Date().toISOString(),
+    dependencies: {
+      database: pgHealthy ? 'UP' : 'DOWN',
+      redis: redisHealthy ? 'UP' : 'UNAVAILABLE',
+      kafka: kafkaHealthy ? 'UP' : 'UNAVAILABLE',
+      rabbitmq: rabbitmqHealthy ? 'UP' : 'UNAVAILABLE'
+    }
+  });
 });
+
+/**
+ * GET /api/health/live - Liveness Probe (Process level)
+ */
+apiRouter.get('/health/live', (req, res) => {
+  return res.status(200).json({
+    status: 'UP',
+    processUptimeSeconds: Math.floor(process.uptime()),
+    timestamp: new Date().toISOString()
+  });
+});
+
+/**
+ * GET /api/health/ready - Readiness Probe (Dependency level)
+ */
+apiRouter.get('/health/ready', async (req, res) => {
+  let pgHealthy = false;
+  try {
+    await pool.query('SELECT 1');
+    pgHealthy = true;
+  } catch (err) {
+    pgHealthy = false;
+  }
+
+  if (pgHealthy) {
+    return res.status(200).json({
+      status: 'READY',
+      database: 'UP',
+      processUptimeSeconds: Math.floor(process.uptime()),
+      timestamp: new Date().toISOString()
+    });
+  } else {
+    return res.status(503).json({
+      status: 'UNAVAILABLE',
+      database: 'DOWN',
+      processUptimeSeconds: Math.floor(process.uptime()),
+      timestamp: new Date().toISOString()
+    });
+  }
+});
+
+import { paymentService } from '../services/paymentService.js';
 
 /**
  * GET /api/services/health - Detailed health check for all microservices & infra
@@ -28,7 +103,7 @@ apiRouter.get('/health', (req, res) => {
 apiRouter.get('/services/health', async (req, res) => {
   const timestamp = new Date().toISOString();
 
-  // Test real PostgreSQL ping
+  // 1. Real PostgreSQL Check
   let pgHealthy = false;
   let pgPoolUsed = 0;
   let pgLatency = 0;
@@ -42,7 +117,7 @@ apiRouter.get('/services/health', async (req, res) => {
     pgHealthy = false;
   }
 
-  // Test real Redis ping
+  // 2. Real Redis Check
   let redisHealthy = false;
   let redisLatency = 0;
   const redisStart = Date.now();
@@ -56,123 +131,117 @@ apiRouter.get('/services/health', async (req, res) => {
     redisHealthy = false;
   }
 
+  // 3. Real Kafka Check
+  const kafkaHealthy = kafkaProducer.isKafkaConnected();
+
+  // 4. Real RabbitMQ Check
+  const rabbitmqHealthy = rabbitMQClient.getIsConnected();
+
+  // Overall system status calculation:
+  // HEALTHY: All core & broker dependencies functional
+  // DEGRADED: PostgreSQL functional, but secondary brokers/caches disconnected
+  // UNAVAILABLE: PostgreSQL database unreachable
+  let overallStatus: 'HEALTHY' | 'DEGRADED' | 'UNAVAILABLE' = 'HEALTHY';
+  if (!pgHealthy) {
+    overallStatus = 'UNAVAILABLE';
+  } else if (!redisHealthy || !kafkaHealthy || !rabbitmqHealthy) {
+    overallStatus = 'DEGRADED';
+  }
+
+  const cbState = paymentService.circuitBreaker.getState();
+
   const services = [
     {
       id: 'order-service',
       name: 'Order Service',
-      status: pgHealthy ? 'HEALTHY' : 'DEGRADED',
-      latencyMs: pgHealthy ? Math.max(12, pgLatency) : 110,
-      requestsCount: 1248,
-      uptime: '99.9%',
-      mode: pgHealthy ? 'REAL' : 'SIMULATED',
-      lastChecked: '2 seconds ago',
+      status: pgHealthy ? 'HEALTHY' : 'UNAVAILABLE',
+      latencyMs: pgHealthy ? pgLatency : 0,
+      mode: pgHealthy ? 'REAL' : 'UNAVAILABLE',
+      lastChecked: 'Just now',
       details: {
         type: 'Microservice',
         endpoint: '/api/orders',
         protocol: 'HTTP / REST',
         framework: 'Express + Saga Orchestrator',
-        activeTransactions: 4,
-        recentErrors: 0
+        dbConnection: pgHealthy ? 'CONNECTED' : 'DISCONNECTED'
       }
     },
     {
       id: 'inventory-service',
       name: 'Inventory Service',
-      status: 'HEALTHY',
-      latencyMs: 14,
-      requestsCount: 3890,
-      uptime: '99.95%',
-      mode: 'REAL',
-      lastChecked: '1 second ago',
+      status: pgHealthy ? 'HEALTHY' : 'UNAVAILABLE',
+      latencyMs: pgHealthy ? pgLatency : 0,
+      mode: pgHealthy ? 'REAL' : 'UNAVAILABLE',
+      lastChecked: 'Just now',
       details: {
         type: 'Microservice',
         endpoint: '/api/inventory',
-        lockingStrategy: 'Redlock Mutex / Version CAS',
-        table: 'inventory',
-        recentErrors: 0
+        lockingStrategy: 'PostgreSQL FOR UPDATE / CAS Versioning',
+        table: 'inventory'
       }
     },
     {
       id: 'payment-service',
       name: 'Payment Service',
       status: 'HEALTHY',
-      latencyMs: 65,
-      requestsCount: 1120,
-      uptime: '99.8%',
+      latencyMs: 0,
       mode: 'REAL',
-      lastChecked: '3 seconds ago',
+      lastChecked: 'Just now',
       details: {
         type: 'Microservice',
-        circuitBreaker: 'ACTIVE (Threshold 30%)',
-        gateway: 'Stripe Mock Adapter',
-        recentErrors: 1
+        circuitBreakerState: cbState,
+        idempotency: 'Active (PostgreSQL + In-Memory Store)'
       }
     },
     {
       id: 'fulfillment-service',
       name: 'Fulfillment Service',
-      status: 'HEALTHY',
-      latencyMs: 32,
-      requestsCount: 940,
-      uptime: '99.9%',
-      mode: 'REAL',
-      lastChecked: '5 seconds ago',
+      status: pgHealthy ? 'HEALTHY' : 'UNAVAILABLE',
+      latencyMs: 0,
+      mode: pgHealthy ? 'REAL' : 'UNAVAILABLE',
+      lastChecked: 'Just now',
       details: {
         type: 'Microservice',
-        carrierIntegration: 'FedEx / UPS Async Outbox',
-        queue: 'fulfillment_queue',
-        recentErrors: 0
+        carrierIntegration: 'Transactional Outbox Pattern',
+        queue: 'outbox_events'
       }
     },
     {
       id: 'notification-worker',
       name: 'Notification Worker',
-      status: 'HEALTHY',
-      latencyMs: 9,
-      requestsCount: 2150,
-      uptime: '99.99%',
-      mode: 'REAL',
-      lastChecked: '1 second ago',
+      status: rabbitmqHealthy ? 'HEALTHY' : 'UNAVAILABLE',
+      latencyMs: 0,
+      mode: rabbitmqHealthy ? 'REAL' : 'UNAVAILABLE',
+      lastChecked: 'Just now',
       details: {
         type: 'Worker Process',
         broker: 'RabbitMQ Consumer',
-        queue: 'order_notifications',
-        recentErrors: 0
+        queue: 'order_notifications'
       }
     },
     {
       id: 'kafka',
       name: 'Kafka Event Mesh',
-      status: kafkaProducer.isKafkaConnected() ? 'HEALTHY' : 'UNAVAILABLE',
-      latencyMs: kafkaProducer.isKafkaConnected() ? 6 : 0,
-      requestsCount: kafkaProducer.isKafkaConnected() ? 14500 : 0,
-      uptime: kafkaProducer.isKafkaConnected() ? '99.99%' : '0%',
-      mode: kafkaProducer.isKafkaConnected() ? 'REAL' : 'UNAVAILABLE',
+      status: kafkaHealthy ? 'HEALTHY' : 'UNAVAILABLE',
+      latencyMs: 0,
+      mode: kafkaHealthy ? 'REAL' : 'UNAVAILABLE',
       lastChecked: 'Just now',
       details: {
         type: 'Event Streaming Broker',
         cluster: process.env.KAFKA_BROKERS || 'localhost:9092',
-        topics: ['OrderCreated', 'InventoryReserved', 'PaymentProcessed', 'OrderFailed'],
-        partitions: 4,
-        consumerGroups: 3,
-        recentErrors: kafkaProducer.isKafkaConnected() ? 0 : 1
+        topics: ['OrderCreated', 'InventoryReserved', 'PaymentProcessed', 'OrderFailed']
       }
     },
     {
       id: 'rabbitmq',
       name: 'RabbitMQ Broker',
-      status: rabbitMQClient.getIsConnected() ? 'HEALTHY' : 'UNAVAILABLE',
-      latencyMs: rabbitMQClient.getIsConnected() ? 11 : 0,
-      requestsCount: rabbitMQClient.getIsConnected() ? 8400 : 0,
-      uptime: rabbitMQClient.getIsConnected() ? '99.95%' : '0%',
-      mode: rabbitMQClient.getIsConnected() ? 'REAL' : 'UNAVAILABLE',
+      status: rabbitmqHealthy ? 'HEALTHY' : 'UNAVAILABLE',
+      latencyMs: 0,
+      mode: rabbitmqHealthy ? 'REAL' : 'UNAVAILABLE',
       lastChecked: 'Just now',
       details: {
         type: 'AMQP Message Broker',
-        host: process.env.RABBITMQ_URL || 'amqp://localhost:5672',
-        exchanges: ['orders_exchange', 'notification_dlx'],
-        queues: ['notification_queue', 'notification_dlq'],
-        recentErrors: rabbitMQClient.getIsConnected() ? 0 : 1
+        host: process.env.RABBITMQ_URL || 'amqp://localhost:5672'
       }
     },
     {
@@ -180,15 +249,11 @@ apiRouter.get('/services/health', async (req, res) => {
       name: 'Redis Mutex Engine',
       status: redisHealthy ? 'HEALTHY' : 'UNAVAILABLE',
       latencyMs: redisHealthy ? redisLatency : 0,
-      requestsCount: redisHealthy ? 5420 : 0,
-      uptime: redisHealthy ? '99.99%' : '0%',
       mode: redisHealthy ? 'REAL' : 'UNAVAILABLE',
       lastChecked: 'Just now',
       details: {
         type: 'In-Memory Cache & Mutex Lock Manager',
-        host: process.env.REDIS_URL || 'redis://localhost:6379',
-        activeLocks: 0,
-        recentErrors: redisHealthy ? 0 : 1
+        host: process.env.REDIS_URL || 'redis://localhost:6379'
       }
     },
     {
@@ -196,8 +261,6 @@ apiRouter.get('/services/health', async (req, res) => {
       name: 'PostgreSQL Database',
       status: pgHealthy ? 'HEALTHY' : 'UNAVAILABLE',
       latencyMs: pgHealthy ? pgLatency : 0,
-      requestsCount: pgHealthy ? 9280 : 0,
-      uptime: pgHealthy ? '99.99%' : '0%',
       mode: pgHealthy ? 'REAL' : 'UNAVAILABLE',
       lastChecked: 'Just now',
       details: {
@@ -205,16 +268,15 @@ apiRouter.get('/services/health', async (req, res) => {
         connection: pgHealthy ? 'Connected' : 'Disconnected',
         pool: `${pgPoolUsed} / ${(pool as any).options?.max || 20}`,
         latency: `${pgLatency} ms`,
-        database: 'orderflow',
-        lastQuery: 'SELECT 1',
-        recentErrors: pgHealthy ? 0 : 1
+        database: 'orderflow'
       }
     }
   ];
 
   return res.json({
-    status: 'UP',
+    status: overallStatus,
     timestamp,
+    processUptimeSeconds: Math.floor(process.uptime()),
     services
   });
 });
@@ -232,33 +294,52 @@ apiRouter.get('/metrics', async (req, res) => {
   }
 });
 
+import { validateOrderPayload } from '../utils/orderValidator.js';
+
 /**
- * POST /api/orders - Submit Order via Saga Orchestrator
+ * POST /api/orders - Submit Order via Asynchronous Saga Workflow
  */
 apiRouter.post('/orders', idempotencyMiddleware, async (req, res) => {
   try {
-    const { sku, quantity, price, customerEmail, idempotencyKey, lockStrategy } = req.body;
-
-    if (!sku || !quantity || !customerEmail) {
-      return res.status(400).json({ error: 'Missing required parameters: sku, quantity, customerEmail' });
+    const validation = validateOrderPayload(req.body);
+    if (!validation.valid || !validation.data) {
+      return res.status(validation.statusCode || 400).json({ error: validation.error });
     }
+
+    const { sku, quantity, customerEmail, idempotencyKey, lockStrategy } = validation.data;
 
     const result = await orderService.createOrder({
       sku,
-      quantity: parseInt(quantity),
-      price: parseFloat(price || 999),
+      quantity,
       customerEmail,
       idempotencyKey: idempotencyKey || `idemp_${Date.now()}`,
-      lockStrategy: lockStrategy || 'PESSIMISTIC'
+      lockStrategy
     });
 
     // Record Prometheus Order Counter
-    ordersTotalCounter.inc({ status: result.status, lock_strategy: lockStrategy || 'PESSIMISTIC' });
+    ordersTotalCounter.inc({ status: result.status, lock_strategy: lockStrategy });
 
-    return res.status(result.status === 'COMPLETED' ? 201 : 200).json(result);
+    return res.status(201).json(result);
 
   } catch (err: any) {
-    return res.status(500).json({ error: err.message });
+    const statusCode = err.statusCode || 500;
+    const errorMessage = statusCode === 500 ? 'Internal Server Error' : err.message;
+    return res.status(statusCode).json({ error: errorMessage });
+  }
+});
+
+/**
+ * GET /api/orders/:id - Query Order status and details
+ */
+apiRouter.get('/orders/:id', async (req, res) => {
+  try {
+    const order = await orderService.getOrder(req.params.id);
+    if (!order) {
+      return res.status(404).json({ error: 'Order not found' });
+    }
+    return res.json(order);
+  } catch (err: any) {
+    return res.status(500).json({ error: 'Internal Server Error' });
   }
 });
 
@@ -274,5 +355,66 @@ apiRouter.get('/inventory/:sku', async (req, res) => {
     return res.json(stock);
   } catch (err: any) {
     return res.status(500).json({ error: err.message });
+  }
+});
+
+import { verifyWebhookSignature } from '../middleware/webhookAuth.js';
+import { sagaOrchestrator } from '../saga/sagaOrchestrator.js';
+
+/**
+ * POST /api/webhooks/payment - Production-Style Payment Gateway Webhook Endpoint
+ * Authenticates signatures using HMAC SHA-256 and delegates event processing to Saga Engine
+ * under atomic processed_events deduplication constraints.
+ */
+apiRouter.post('/webhooks/payment', verifyWebhookSignature, async (req, res) => {
+  const { eventId, eventType, orderId, sku, quantity, error } = req.body;
+
+  if (!eventId || !eventType || !orderId) {
+    return res.status(400).json({ error: 'Malformed webhook payload: missing eventId, eventType, or orderId' });
+  }
+
+  const consumerGroup = 'payment-webhook-handler';
+
+  try {
+    const client = await pool.connect();
+    try {
+      await client.query('BEGIN');
+
+      // Deduplicate webhook delivery using UNIQUE(event_id, consumer_group) constraint
+      const insertRes = await client.query(
+        `INSERT INTO processed_events (event_id, consumer_group)
+         VALUES ($1, $2)
+         ON CONFLICT (event_id, consumer_group) DO NOTHING`,
+        [eventId, consumerGroup]
+      );
+
+      if (insertRes.rowCount === 0) {
+        await client.query('COMMIT');
+        return res.status(200).json({ message: 'Duplicate webhook event safely ignored', eventId });
+      }
+
+      // Delegate event to Saga State Machine (enforces conditional status transition checks)
+      if (eventType === 'payment.succeeded') {
+        await sagaOrchestrator.transitionState(orderId, 'COMPLETED');
+      } else if (eventType === 'payment.failed') {
+        await sagaOrchestrator.handlePaymentFailed({
+          orderId,
+          sku: sku || 'UNKNOWN',
+          quantity: quantity || 1,
+          error: error || 'Payment failed via webhook callback'
+        });
+      }
+
+      await client.query('COMMIT');
+      return res.status(200).json({ status: 'SUCCESS', message: 'Webhook event processed', eventId });
+
+    } catch (err: any) {
+      await client.query('ROLLBACK');
+      throw err;
+    } finally {
+      client.release();
+    }
+  } catch (err: any) {
+    return res.status(500).json({ error: 'Internal Server Error' });
   }
 });

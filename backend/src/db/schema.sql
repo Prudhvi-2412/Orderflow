@@ -59,10 +59,29 @@ CREATE TABLE IF NOT EXISTS payments (
     id SERIAL PRIMARY KEY,
     order_id VARCHAR(100) NOT NULL REFERENCES orders(order_id) ON DELETE CASCADE,
     txn_id VARCHAR(100) UNIQUE NOT NULL,
+    idempotency_key VARCHAR(255) UNIQUE,
     amount DECIMAL(10, 2) NOT NULL,
-    status VARCHAR(50) NOT NULL, -- SUCCESS, REFUNDED, FAILED
-    created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
+    status VARCHAR(50) NOT NULL DEFAULT 'SUCCESS', -- PENDING, PROCESSING, SUCCESS, REFUNDED, FAILED
+    created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
+    CONSTRAINT unique_payment_order UNIQUE (order_id)
 );
+
+-- Ensure columns/constraints exist if table was created in an earlier migration
+ALTER TABLE payments ADD COLUMN IF NOT EXISTS idempotency_key VARCHAR(255) UNIQUE;
+
+-- 6b. Inventory Reservations Table (Idempotent Stock Reservation & Release)
+CREATE TABLE IF NOT EXISTS inventory_reservations (
+    id SERIAL PRIMARY KEY,
+    order_id VARCHAR(100) NOT NULL,
+    sku VARCHAR(100) NOT NULL REFERENCES products(sku),
+    quantity INT NOT NULL CHECK (quantity > 0),
+    status VARCHAR(50) NOT NULL DEFAULT 'RESERVED', -- RESERVED, RELEASED, CONFIRMED
+    created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
+    updated_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
+    CONSTRAINT unique_reservation_order UNIQUE (order_id)
+);
+
+CREATE INDEX IF NOT EXISTS idx_inventory_reservations_order ON inventory_reservations(order_id);
 
 -- 7. Transactional Outbox Table
 CREATE TABLE IF NOT EXISTS outbox_events (
@@ -70,12 +89,20 @@ CREATE TABLE IF NOT EXISTS outbox_events (
     event_id VARCHAR(100) UNIQUE NOT NULL,
     topic VARCHAR(100) NOT NULL,
     payload JSONB NOT NULL,
-    status VARCHAR(50) NOT NULL DEFAULT 'PENDING', -- PENDING, PUBLISHED, FAILED
+    status VARCHAR(50) NOT NULL DEFAULT 'PENDING', -- PENDING, PROCESSING, PUBLISHED, FAILED
     attempts INT NOT NULL DEFAULT 0,
     error TEXT,
+    processing_started_at TIMESTAMP WITH TIME ZONE,
+    claim_token VARCHAR(64),
+    next_retry_at TIMESTAMP WITH TIME ZONE,
     created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
     processed_at TIMESTAMP WITH TIME ZONE
 );
+
+ALTER TABLE outbox_events ADD COLUMN IF NOT EXISTS claim_token VARCHAR(64);
+
+ALTER TABLE outbox_events ADD COLUMN IF NOT EXISTS processing_started_at TIMESTAMP WITH TIME ZONE;
+ALTER TABLE outbox_events ADD COLUMN IF NOT EXISTS next_retry_at TIMESTAMP WITH TIME ZONE;
 
 CREATE INDEX IF NOT EXISTS idx_outbox_status ON outbox_events(status);
 
@@ -95,8 +122,11 @@ CREATE TABLE IF NOT EXISTS idempotency_keys (
     request_hash VARCHAR(64) NOT NULL,
     status VARCHAR(50) NOT NULL DEFAULT 'PENDING', -- PENDING, COMPLETED, FAILED
     response_body JSONB,
+    processing_started_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
     created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
     updated_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
 );
+
+ALTER TABLE idempotency_keys ADD COLUMN IF NOT EXISTS processing_started_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP;
 
 CREATE INDEX IF NOT EXISTS idx_idempotency_key ON idempotency_keys(key);

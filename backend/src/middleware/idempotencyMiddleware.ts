@@ -2,7 +2,15 @@ import { Request, Response, NextFunction } from 'express';
 import { idempotencyService } from '../services/idempotencyService.js';
 
 export async function idempotencyMiddleware(req: Request, res: Response, next: NextFunction) {
-  const key = req.headers['idempotency-key'] as string;
+  const keyHeader = req.headers['idempotency-key'];
+
+  if (keyHeader !== undefined) {
+    if (typeof keyHeader !== 'string' || keyHeader.trim().length === 0 || keyHeader.trim().length > 255) {
+      return res.status(400).json({ error: 'idempotencyKey must be a non-empty string with length <= 255' });
+    }
+  }
+
+  const key = typeof keyHeader === 'string' ? keyHeader.trim() : undefined;
 
   if (!key) {
     return next(); // Proceed normally if no Idempotency-Key provided
@@ -26,7 +34,7 @@ export async function idempotencyMiddleware(req: Request, res: Response, next: N
     }
 
     if (result.action === 'SERVE_CACHE') {
-      return res.status(200).json(result.response);
+      return res.status(result.statusCode || 201).json(result.response);
     }
 
     // Capture res.send to cache response body on completion

@@ -1,127 +1,100 @@
 import { pool } from '../config/db.js';
-import { inventoryService } from './inventoryService.js';
-import { paymentService } from './paymentService.js';
+import { validateOrderPayload } from '../utils/orderValidator.js';
+import { KAFKA_TOPICS } from '../kafka/topics.js';
 
 export interface CreateOrderRequest {
   sku: string;
   quantity: number;
-  price: number;
+  price?: number; // Client price is strictly ignored in favor of DB price
   customerEmail: string;
-  idempotencyKey: string;
+  idempotencyKey?: string;
   lockStrategy?: 'PESSIMISTIC' | 'OPTIMISTIC' | 'NONE';
 }
 
 export class OrderService {
   
+  /**
+   * Create Initial Order & Stage OrderCreated Event in Outbox (Transaction 1)
+   * Asynchronous Saga Orchestrator handles inventory reservation & payment processing.
+   */
   async createOrder(req: CreateOrderRequest) {
+    const validation = validateOrderPayload(req);
+    if (!validation.valid || !validation.data) {
+      const err: any = new Error(validation.error);
+      err.statusCode = validation.statusCode || 400;
+      throw err;
+    }
+
     const {
       sku,
       quantity,
-      price,
       customerEmail,
-      idempotencyKey,
       lockStrategy = 'PESSIMISTIC'
-    } = req;
+    } = validation.data;
 
-    const client = await pool.connect();
     const orderId = `ORD-${Date.now()}-${Math.floor(1000 + Math.random() * 9000)}`;
-    const totalAmount = price * quantity;
 
+    let dbUnitPrice = 0;
+    let totalAmount = 0;
+
+    // --- TRANSACTION: Create Order, Order Items & Outbox Event ---
+    const client = await pool.connect();
     try {
       await client.query('BEGIN');
 
-      // 1. Create Pending Order Record
+      // 1. Authoritative Product Price Lookup from PostgreSQL
+      const productRes = await client.query(
+        `SELECT price FROM products WHERE sku = $1`,
+        [sku]
+      );
+
+      if (productRes.rows.length === 0) {
+        await client.query('ROLLBACK');
+        const err: any = new Error(`Product not found for SKU: ${sku}`);
+        err.statusCode = 404;
+        throw err;
+      }
+
+      dbUnitPrice = parseFloat(productRes.rows[0].price);
+      totalAmount = dbUnitPrice * quantity;
+
+      // 2. Create Initial Order Record (Status: PENDING)
       await client.query(
         `INSERT INTO orders (order_id, customer_email, total_amount, status, lock_strategy)
-         VALUES ($1, $2, $3, 'PROCESSING', $4)`,
+         VALUES ($1, $2, $3, 'PENDING', $4)`,
         [orderId, customerEmail, totalAmount, lockStrategy]
       );
 
+      // Store unit price in order_items
       await client.query(
         `INSERT INTO order_items (order_id, sku, quantity, price)
          VALUES ($1, $2, $3, $4)`,
-        [orderId, sku, quantity, price]
+        [orderId, sku, quantity, dbUnitPrice]
       );
 
-      // 2. Reserve Inventory with Concurrency Control inside same DB transaction
-      const reservation = await inventoryService.reserveStock(client, sku, quantity, lockStrategy);
-
-      if (!reservation.success) {
-        await client.query(
-          `UPDATE orders SET status = 'FAILED', error_reason = $1, updated_at = NOW() WHERE order_id = $2`,
-          [reservation.error, orderId]
-        );
-
-        // Stage Outbox Failed Event
-        await client.query(
-          `INSERT INTO outbox_events (event_id, topic, payload, status)
-           VALUES ($1, 'OrderFailed', $2, 'PENDING')`,
-          [`evt_${Date.now()}`, JSON.stringify({ orderId, reason: reservation.error })]
-        );
-
-        await client.query('COMMIT');
-
-        return {
-          orderId,
-          status: 'FAILED',
-          error: reservation.error
-        };
-      }
-
-      // 3. Stage OrderCreated & InventoryReserved in Outbox Table
+      // 3. Stage OrderCreated Outbox Event in the SAME transaction
       await client.query(
         `INSERT INTO outbox_events (event_id, topic, payload, status)
-         VALUES ($1, 'OrderCreated', $2, 'PENDING')`,
-        [`evt_${Date.now()}_1`, JSON.stringify({ orderId, sku, quantity, totalAmount })]
+         VALUES ($1, $2, $3, 'PENDING')
+         ON CONFLICT (event_id) DO NOTHING`,
+        [
+          `evt_created_${orderId}`,
+          KAFKA_TOPICS.ORDERS_CREATED,
+          JSON.stringify({ orderId, sku, quantity, totalAmount, customerEmail, lockStrategy })
+        ]
       );
 
       await client.query('COMMIT');
 
-      // 4. Process Payment (External Service Call)
-      try {
-        const paymentResult = await paymentService.processPayment(orderId, totalAmount, customerEmail);
-
-        // Record Payment in DB
-        await pool.query(
-          `INSERT INTO payments (order_id, txn_id, amount, status)
-           VALUES ($1, $2, $3, 'SUCCESS')`,
-          [orderId, paymentResult.txnId, totalAmount]
-        );
-
-        await pool.query(
-          `UPDATE orders SET status = 'COMPLETED', updated_at = NOW() WHERE order_id = $1`,
-          [orderId]
-        );
-
-        return {
-          orderId,
-          status: 'COMPLETED',
-          sku,
-          quantity,
-          totalAmount,
-          txnId: paymentResult.txnId
-        };
-
-      } catch (paymentErr: any) {
-        // --- SAGA COMPENSATION ROLLBACK ---
-        console.warn(`[OrderService] Payment failed for ${orderId}. Initiating Saga Compensation...`);
-
-        // 1. Compensation: Release Reserved Inventory
-        await inventoryService.releaseStock(sku, quantity);
-
-        // 2. Update Order Status to CANCELLED
-        await pool.query(
-          `UPDATE orders SET status = 'CANCELLED', error_reason = $1, updated_at = NOW() WHERE order_id = $2`,
-          [`Payment Error: ${paymentErr.message}`, orderId]
-        );
-
-        return {
-          orderId,
-          status: 'CANCELLED',
-          error: paymentErr.message,
-          compensationExecuted: true
-        };
-      }
+      return {
+        orderId,
+        status: 'PENDING',
+        sku,
+        quantity,
+        unitPrice: dbUnitPrice,
+        totalAmount,
+        message: 'Order accepted for processing'
+      };
 
     } catch (err: any) {
       await client.query('ROLLBACK');
@@ -132,7 +105,15 @@ export class OrderService {
   }
 
   async getOrder(orderId: string) {
-    const res = await pool.query(`SELECT * FROM orders WHERE order_id = $1`, [orderId]);
+    const res = await pool.query(
+      `SELECT o.order_id, o.customer_email, o.total_amount, o.status, o.lock_strategy, o.error_reason, o.created_at, o.updated_at,
+              oi.sku, oi.quantity, oi.price as unit_price, p.txn_id, p.status as payment_status
+       FROM orders o
+       LEFT JOIN order_items oi ON o.order_id = oi.order_id
+       LEFT JOIN payments p ON o.order_id = p.order_id
+       WHERE o.order_id = $1`,
+      [orderId]
+    );
     return res.rows[0] || null;
   }
 }

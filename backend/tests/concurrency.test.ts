@@ -16,6 +16,16 @@ describe('PostgreSQL Concurrency Control & SELECT FOR UPDATE Tests', () => {
     const initialStock = 1;
     const concurrentUsers = 10;
 
+    await pool.query(
+      `INSERT INTO products (sku, name, price) VALUES ($1, 'Test iPhone', 999.00) ON CONFLICT (sku) DO NOTHING`,
+      [sku]
+    );
+
+    await pool.query(
+      `INSERT INTO inventory (sku, stock_quantity, version) VALUES ($1, $2, 1) ON CONFLICT (sku) DO UPDATE SET stock_quantity = $2`,
+      [sku, initialStock]
+    );
+
     // Simulate concurrent calls
     const requests = Array.from({ length: concurrentUsers }).map((_, idx) =>
       orderService.createOrder({
